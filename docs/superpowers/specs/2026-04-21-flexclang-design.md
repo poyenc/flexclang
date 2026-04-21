@@ -178,12 +178,6 @@ mir-passes:
     target: machine-scheduler
     plugin: ./my-post-sched.so
 
-  # Insert at a named hook point (maps to GCNPassConfig virtual methods)
-  - action: insert-at
-    hook: pre-regalloc     # pre-isel, machine-ssa-opt, ilp-opts,
-    plugin: ./my-pass.so   # pre-regalloc, post-regalloc, pre-sched2,
-                           # pre-emit, pre-emit2
-
 # LLVM IR pass modifications
 ir-passes:
   # Disable a built-in IR pass (not possible in upstream clang)
@@ -212,7 +206,6 @@ CLI flags mirror YAML config entries. CLI takes precedence when both specify the
 | `--flex-disable-pass=<name>` | `mir-passes: [{action: disable, target: <name>}]` |
 | `--flex-replace-pass=<name>:<plugin.so>` | `mir-passes: [{action: replace, target: <name>, plugin: <so>}]` |
 | `--flex-insert-after=<name>:<plugin.so>` | `mir-passes: [{action: insert-after, target: <name>, plugin: <so>}]` |
-| `--flex-insert-at=<hook>:<plugin.so>` | `mir-passes: [{action: insert-at, hook: <hook>, plugin: <so>}]` |
 
 **IR pass control:**
 
@@ -229,7 +222,6 @@ Note: `-fpass-plugin=` is an upstream clang flag that works as-is. The YAML `loa
 |----------|---------|
 | `--flex-config=<path>` | Load YAML config file |
 | `--flex-list-passes` | Dump all MIR and IR pass names in pipeline order |
-| `--flex-latency-model=<path>` | Load custom latency model (future work) |
 
 ### 4.3 Environment Variables
 
@@ -333,9 +325,7 @@ Output format:
   [mir.25] greedy (vgpr)
   ...
 
-=== Hook Points (for insert-at) ===
-  pre-isel, machine-ssa-opt, ilp-opts, pre-regalloc,
-  post-regalloc, pre-sched2, pre-emit, pre-emit2
+Use --flex-insert-after=<pass-name>:<plugin.so> to insert after any pass listed above.
 ```
 
 ### 6.2 Pass Name Source
@@ -846,7 +836,7 @@ The agent team operates in a review loop:
 ### In Scope (Phase 1)
 - flexclang binary that links against installed LLVM/Clang
 - Drop-in clang replacement (all standard flags work, including `-fpass-plugin=`)
-- YAML config + CLI flags for MIR pass modifications (disable, replace, insert-after, insert-at)
+- YAML config + CLI flags for MIR pass modifications (disable, replace, insert-after)
 - MIR pass plugin loading via `.so` + `flexclangCreatePass()` API
 - Per-pass disable for IR passes (`--flex-disable-ir-pass`)
 - `--flex-list-passes` for pipeline discovery

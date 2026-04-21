@@ -224,9 +224,9 @@ Parse `--flex-*` CLI flags, strip them from args before passing to clang, and st
 namespace flexclang {
 
 struct MIRPassRule {
-  enum Action { Disable, Replace, InsertAfter, InsertAt };
+  enum Action { Disable, Replace, InsertAfter };
   Action action;
-  std::string target; // pass name or hook name
+  std::string target; // pass name (e.g., "si-form-memory-clauses")
   std::string plugin; // path to .so (empty for disable)
 };
 
@@ -312,14 +312,6 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
       rule.target = name;
       rule.plugin = plugin;
       config.mirRules.push_back(rule);
-    } else if (arg.starts_with("--flex-insert-at=")) {
-      auto [hook, plugin] = splitNamePlugin(
-          arg.substr(strlen("--flex-insert-at=")));
-      MIRPassRule rule;
-      rule.action = MIRPassRule::InsertAt;
-      rule.target = hook;
-      rule.plugin = plugin;
-      config.mirRules.push_back(rule);
     } else if (arg.starts_with("--flex-disable-ir-pass=")) {
       IRPassRule rule;
       rule.action = IRPassRule::Disable;
@@ -327,9 +319,6 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
       config.irRules.push_back(rule);
     } else if (arg.starts_with("--flex-config=")) {
       config.configFile = arg.substr(strlen("--flex-config=")).str();
-    } else if (arg.starts_with("--flex-latency-model=")) {
-      config.latencyModelFile =
-          arg.substr(strlen("--flex-latency-model=")).str();
     } else if (arg == "--flex-list-passes") {
       config.listPasses = true;
     } else {
@@ -394,7 +383,6 @@ bool parseFlexYAML(FlexConfig &config, StringRef path) {
           if (action == "disable") rule.action = MIRPassRule::Disable;
           else if (action == "replace") rule.action = MIRPassRule::Replace;
           else if (action == "insert-after") rule.action = MIRPassRule::InsertAfter;
-          else if (action == "insert-at") rule.action = MIRPassRule::InsertAt;
           else {
             errs() << "flexclang: warning: unknown mir-passes action: "
                    << action << "\n";
@@ -840,26 +828,6 @@ void registerFlexPassConfigCallback(const FlexConfig &config) {
                    << "' from plugin " << rule.plugin << "\n";
             break;
           }
-          case MIRPassRule::InsertAt: {
-            // insert-at uses hook names, not pass names.
-            // Hook names are resolved by the virtual method overrides in
-            // GCNPassConfig. We map hook names to the last pass added by
-            // each hook, then use insertPass.
-            // For now, treat insert-at the same as insert-after with the
-            // hook name as the pass name. This will be refined.
-            const void *ID = resolvePassID(rule.target);
-            if (!ID) {
-              errs() << "flexclang: warning: hook '" << rule.target
-                     << "' could not be resolved to a pass ID\n";
-              break;
-            }
-            Pass *NewPass = loadMIRPassPlugin(rule.plugin);
-            if (!NewPass) break;
-            PassConfig->insertPass(ID, NewPass);
-            errs() << "flexclang: inserted MIR pass at hook '" << rule.target
-                   << "' from plugin " << rule.plugin << "\n";
-            break;
-          }
           }
         }
       });
@@ -1040,9 +1008,8 @@ In the `RegisterTargetPassConfigCallback` lambda, at the beginning (before apply
               errs() << "  " << PI.getPassArgument() << " - "
                      << PI.getPassName() << "\n";
           });
-          errs() << "\n=== Hook Points (for --flex-insert-at) ===\n";
-          errs() << "  pre-isel, machine-ssa-opt, ilp-opts, pre-regalloc,\n";
-          errs() << "  post-regalloc, pre-sched2, pre-emit, pre-emit2\n";
+          errs() << "\nUse --flex-insert-after=<pass-name>:<plugin.so>"
+                 << " to insert after any pass listed above.\n";
         }
 ```
 
@@ -1067,9 +1034,8 @@ The most robust approach for Phase 1: print a known static list of AMDGPU MIR pa
                      << "\n";
             }
           }
-          errs() << "\n=== Hook Points (for --flex-insert-at) ===\n";
-          errs() << "  pre-isel, machine-ssa-opt, ilp-opts, pre-regalloc,\n";
-          errs() << "  post-regalloc, pre-sched2, pre-emit, pre-emit2\n";
+          errs() << "\nUse --flex-insert-after=<pass-name>:<plugin.so>"
+                 << " to insert after any pass listed above.\n";
           // Don't actually compile -- just exit.
         }
 ```
