@@ -90,8 +90,7 @@ flexclang's `main()` performs these steps:
 6. Create a `CompilerInstance` + `CompilerInvocation` from remaining args (standard clang path).
 7. Register IR pass modifications:
    - For each `ir-passes.disable` entry: register a `shouldRunOptionalPassCallback` that returns false for that pass name.
-   - For each `ir-passes.load-plugin` entry: load the `.so` and call `registerPassBuilderCallbacks()`.
-   - For each `ir-passes.add` entry: register at the named extension point.
+   - For each `ir-passes.load-plugin` entry: load the `.so` and call `registerPassBuilderCallbacks()` (same as `-fpass-plugin=`).
 8. Call `ExecuteCompilerInvocation()` -- standard clang execution.
 
 ### 3.4 MIR Pass Interception (RegisterTargetPassConfigCallback)
@@ -163,7 +162,7 @@ For IR pass plugins, the standard `PassPlugin` API is used (`llvmGetPassPluginIn
 ```yaml
 # flexclang.yaml
 
-# Machine IR pass modifications
+# Machine IR pass modifications (flexclang's core value-add)
 mir-passes:
   # Disable a pass (skip it)
   - action: disable
@@ -174,17 +173,12 @@ mir-passes:
     target: machine-scheduler
     plugin: ./my-scheduler.so
 
-  # Insert a plugin before an existing pass
-  - action: insert-before
-    target: machine-scheduler
-    plugin: ./my-analysis.so
-
   # Insert a plugin after an existing pass
   - action: insert-after
     target: machine-scheduler
     plugin: ./my-post-sched.so
 
-  # Insert at a named hook point
+  # Insert at a named hook point (maps to GCNPassConfig virtual methods)
   - action: insert-at
     hook: pre-regalloc     # pre-isel, machine-ssa-opt, ilp-opts,
     plugin: ./my-pass.so   # pre-regalloc, post-regalloc, pre-sched2,
@@ -192,24 +186,15 @@ mir-passes:
 
 # LLVM IR pass modifications
 ir-passes:
-  # Disable a built-in IR pass
+  # Disable a built-in IR pass (not possible in upstream clang)
   - action: disable
     target: instcombine
 
-  # Add plugin at an extension point
-  - action: add
-    extension-point: optimizer-last  # peephole, pipeline-start,
-    plugin: ./my-ir-pass.so          # vectorizer-start, vectorizer-end,
-                                     # scalar-optimizer-late, cgscc-late
-
   # Load a standard PassPlugin (equivalent to -fpass-plugin=)
-  # Plugin controls its own insertion point via PassBuilder callbacks
+  # Plugin controls its own insertion point via PassBuilder callbacks.
+  # Useful in YAML so the config is self-contained.
   - action: load-plugin
     plugin: ./my-ir-pass.so
-
-  # Replace entire opt pipeline with textual pipeline string
-  - action: set-pipeline
-    pipeline: "module(function(instcombine,sroa),dce)"
 
 # Custom latency model (future work, placeholder)
 latency-model:
@@ -218,23 +203,33 @@ latency-model:
 
 ### 4.2 CLI Flags
 
-All YAML config entries have CLI equivalents:
+CLI flags mirror YAML config entries. CLI takes precedence when both specify the same pass.
+
+**MIR pass control (flexclang-only, no upstream equivalent):**
 
 | CLI Flag | YAML Equivalent |
 |----------|----------------|
-| `--flex-config=<path>` | Load YAML config file |
 | `--flex-disable-pass=<name>` | `mir-passes: [{action: disable, target: <name>}]` |
 | `--flex-replace-pass=<name>:<plugin.so>` | `mir-passes: [{action: replace, target: <name>, plugin: <so>}]` |
-| `--flex-insert-before=<name>:<plugin.so>` | `mir-passes: [{action: insert-before, ...}]` |
-| `--flex-insert-after=<name>:<plugin.so>` | `mir-passes: [{action: insert-after, ...}]` |
-| `--flex-insert-at=<hook>:<plugin.so>` | `mir-passes: [{action: insert-at, ...}]` |
-| `--flex-disable-ir-pass=<name>` | `ir-passes: [{action: disable, target: <name>}]` |
-| `-fpass-plugin=<plugin.so>` | (upstream clang flag, works as-is -- plugin controls its own insertion point) |
-| `--flex-ir-plugin-at=<ep>:<plugin.so>` | `ir-passes: [{action: add, extension-point: <ep>, ...}]` (user controls insertion point) |
-| `--flex-list-passes` | Dump pipeline (MIR and IR pass names) |
-| `--flex-latency-model=<path>` | `latency-model: {file: <path>}` |
+| `--flex-insert-after=<name>:<plugin.so>` | `mir-passes: [{action: insert-after, target: <name>, plugin: <so>}]` |
+| `--flex-insert-at=<hook>:<plugin.so>` | `mir-passes: [{action: insert-at, hook: <hook>, plugin: <so>}]` |
 
-CLI flags are merged with YAML config. CLI takes precedence for conflicts.
+**IR pass control:**
+
+| CLI Flag | YAML Equivalent |
+|----------|----------------|
+| `--flex-disable-ir-pass=<name>` | `ir-passes: [{action: disable, target: <name>}]` |
+| `-fpass-plugin=<plugin.so>` | `ir-passes: [{action: load-plugin, plugin: <so>}]` |
+
+Note: `-fpass-plugin=` is an upstream clang flag that works as-is. The YAML `load-plugin` action is equivalent, provided for self-contained configs.
+
+**Discovery and config:**
+
+| CLI Flag | Purpose |
+|----------|---------|
+| `--flex-config=<path>` | Load YAML config file |
+| `--flex-list-passes` | Dump all MIR and IR pass names in pipeline order |
+| `--flex-latency-model=<path>` | Load custom latency model (future work) |
 
 ### 4.3 Environment Variables
 
@@ -611,8 +606,6 @@ mir-passes:
 ir-passes:
   - action: load-plugin
     plugin: ./ir-inst-counter.so
-  - action: disable
-    target: instcombine
 
 mir-passes:
   - action: disable
@@ -852,14 +845,13 @@ The agent team operates in a review loop:
 
 ### In Scope (Phase 1)
 - flexclang binary that links against installed LLVM/Clang
-- Drop-in clang replacement (all standard flags work)
-- YAML config + CLI flags for pass modifications
+- Drop-in clang replacement (all standard flags work, including `-fpass-plugin=`)
+- YAML config + CLI flags for MIR pass modifications (disable, replace, insert-after, insert-at)
 - MIR pass plugin loading via `.so` + `flexclangCreatePass()` API
-- IR pass plugin support (wrapping upstream `-fpass-plugin`)
-- Per-pass disable/replace/insert-before/insert-after for MIR passes
-- Per-pass disable for IR passes
+- Per-pass disable for IR passes (`--flex-disable-ir-pass`)
 - `--flex-list-passes` for pipeline discovery
 - Critical pass warnings
+- Example plugins (IR + MIR) and validation script
 
 ### In Scope (Phase 2, future)
 - Custom scheduler pass with corrected latency model
