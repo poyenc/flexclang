@@ -172,7 +172,7 @@ mir-passes:
   - action: replace
     target: machine-scheduler
     plugin: ./my-scheduler.so
-    config: ./gfx942-latency.yaml   # optional: plugin-specific config file
+    config: ./latency-model.yaml   # optional: plugin-specific config file
 
   # Insert a plugin after an existing pass
   - action: insert-after
@@ -321,7 +321,7 @@ mir-passes:
   - action: replace
     target: machine-scheduler
     plugin: ./flex-scheduler.so
-    config: ./gfx942-latency.yaml   # passed to flexclangCreatePassWithConfig
+    config: ./latency-model.yaml   # passed to flexclangCreatePassWithConfig
 ```
 
 flexclang reads the `config` file and passes its contents to `flexclangCreatePassWithConfig()`. If no `config` field is present, or if `flexclangCreatePassWithConfig` is not exported, flexclang falls back to `flexclangCreatePass()`.
@@ -949,28 +949,40 @@ A custom MIR pass plugin (`flex-scheduler.so`) that:
 
 ### 11.2 Latency Model Format (preliminary)
 
+A single file contains latencies for all supported architectures. The scheduler plugin reads the target architecture from the `MachineFunction`'s subtarget and selects the matching section.
+
 ```yaml
-# gfx942-latency.yaml
-target: gfx942
+# latency-model.yaml
 version: 1
 
-instruction-latencies:
+gfx942:
   # Memory operations (measured via rocprofv3)
   vmem-load: 120          # global memory load (default: 80)
   vmem-store: 80          # global memory store
   lds-load: 8             # LDS/shared memory load (default: 5)
   lds-store: 4             # LDS/shared memory store
   smem-load: 20           # scalar memory load (default: 5)
-
   # ALU operations
-  valu-32bit: 1            # 32-bit VALU (default: 1)
-  valu-64bit: 1            # 64-bit VALU
-  valu-trans32: 4          # transcendental 32-bit
-
+  valu-32bit: 1
+  valu-64bit: 1
+  valu-trans32: 4
   # MFMA operations
-  mfma-f16-16x16x16: 8    # MFMA F16 16x16x16
-  mfma-f16-32x32x8: 16    # MFMA F16 32x32x8
-  # ... etc
+  mfma-f16-16x16x16: 8
+  mfma-f16-32x32x8: 16
+
+gfx950:
+  vmem-load: 130
+  vmem-store: 85
+  lds-load: 8
+  lds-store: 4
+  smem-load: 22
+  valu-32bit: 1
+  valu-64bit: 1
+  valu-trans32: 4
+  mfma-f16-16x16x16: 8
+  mfma-f16-32x32x8: 16
+  mfma-f16-16x16x64: 4    # gfx950-only
+  mfma-f16-32x32x32: 8    # gfx950-only
 ```
 
 ### 11.3 Integration
@@ -981,7 +993,7 @@ mir-passes:
   - action: replace
     target: machine-scheduler
     plugin: ./flex-scheduler.so
-    config: ./gfx942-latency.yaml   # plugin reads this latency model
+    config: ./latency-model.yaml   # multi-arch latency model; scheduler selects by target
 ```
 
 ## 12. Agent Team Setup
