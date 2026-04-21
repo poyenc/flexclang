@@ -172,6 +172,7 @@ mir-passes:
   - action: replace
     target: machine-scheduler
     plugin: ./my-scheduler.so
+    config: ./gfx942-latency.yaml   # optional: plugin-specific config file
 
   # Insert a plugin after an existing pass
   - action: insert-after
@@ -190,9 +191,6 @@ ir-passes:
   - action: load-plugin
     plugin: ./my-ir-pass.so
 
-# Custom latency model (future work, placeholder)
-latency-model:
-  file: ./gfx942-latency.yaml
 ```
 
 ### 4.2 CLI Flags
@@ -308,17 +306,27 @@ This plugin works with both flexclang and upstream clang (`clang -fpass-plugin=.
 
 ### 5.3 Optional: Parameterized MIR Pass Plugin
 
-Plugins that need configuration (e.g., a custom scheduler receiving a latency model path) can export an additional entry point:
+Plugins that need configuration (e.g., a custom scheduler receiving a latency model) can export an additional entry point:
 
 ```cpp
-// Optional: factory function that receives YAML config string
+// Optional: factory function that receives plugin-specific config
 extern "C" llvm::MachineFunctionPass*
-flexclangCreatePassWithConfig(const char *yamlConfig);
+flexclangCreatePassWithConfig(const char *configContents);
 ```
 
-If `flexclangCreatePassWithConfig` is found, flexclang calls it with the contents of the `--flex-config` YAML file (or an empty string if none). If not found, flexclang falls back to `flexclangCreatePass()`.
+The `config` field in the YAML rule specifies a plugin-specific config file:
 
-This allows a single scheduler plugin to support multiple targets by reading the latency model path from the YAML config.
+```yaml
+mir-passes:
+  - action: replace
+    target: machine-scheduler
+    plugin: ./flex-scheduler.so
+    config: ./gfx942-latency.yaml   # passed to flexclangCreatePassWithConfig
+```
+
+flexclang reads the `config` file and passes its contents to `flexclangCreatePassWithConfig()`. If no `config` field is present, or if `flexclangCreatePassWithConfig` is not exported, flexclang falls back to `flexclangCreatePass()`.
+
+This keeps concerns separated: the flexclang config (`--flex-config`) controls which passes to modify, while the plugin config controls how the plugin behaves. A single scheduler plugin can support multiple targets by receiving different latency model files.
 
 ### 5.4 Accessing Analysis Passes from Plugins
 
@@ -973,9 +981,7 @@ mir-passes:
   - action: replace
     target: machine-scheduler
     plugin: ./flex-scheduler.so
-
-latency-model:
-  file: ./gfx942-latency.yaml
+    config: ./gfx942-latency.yaml   # plugin reads this latency model
 ```
 
 ## 12. Agent Team Setup

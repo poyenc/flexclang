@@ -210,6 +210,7 @@ struct MIRPassRule {
   Action action;
   std::string target;
   std::string plugin;
+  std::string config; // optional: plugin-specific config file path
 };
 
 struct IRPassRule {
@@ -342,6 +343,7 @@ bool parseFlexYAML(FlexConfig &config, StringRef path) {
             if (fk == "action") action = fv.str();
             else if (fk == "target") rule.target = fv.str();
             else if (fk == "plugin") rule.plugin = fv.str();
+            else if (fk == "config") rule.config = fv.str();
           }
           if (action == "disable") rule.action = MIRPassRule::Disable;
           else if (action == "replace") rule.action = MIRPassRule::Replace;
@@ -569,10 +571,11 @@ class Pass;
 
 namespace flexclang {
 
-/// Load MIR pass plugin. Tries flexclangCreatePassWithConfig(yamlConfig) first,
-/// falls back to flexclangCreatePass(). Returns nullptr on failure.
+/// Load MIR pass plugin. If configPath is non-empty, reads the file and
+/// tries flexclangCreatePassWithConfig(contents) first.
+/// Falls back to flexclangCreatePass(). Returns nullptr on failure.
 llvm::Pass *loadMIRPassPlugin(llvm::StringRef soPath,
-                               llvm::StringRef yamlConfig = "");
+                               llvm::StringRef configPath = "");
 
 } // namespace flexclang
 
@@ -591,7 +594,7 @@ using namespace llvm;
 
 namespace flexclang {
 
-Pass *loadMIRPassPlugin(StringRef soPath, StringRef yamlConfig) {
+Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath) {
   std::string errMsg;
   auto Lib =
       sys::DynamicLibrary::getPermanentLibrary(soPath.str().c_str(), &errMsg);
@@ -601,18 +604,27 @@ Pass *loadMIRPassPlugin(StringRef soPath, StringRef yamlConfig) {
     return nullptr;
   }
 
-  // Try parameterized factory first.
-  using CreateWithConfigFn = MachineFunctionPass *(*)(const char *);
-  auto *CreateWithConfig = reinterpret_cast<CreateWithConfigFn>(
-      Lib.getAddressOfSymbol("flexclangCreatePassWithConfig"));
-  if (CreateWithConfig) {
-    Pass *P = CreateWithConfig(yamlConfig.str().c_str());
-    if (!P) {
-      errs() << "flexclang: error: flexclangCreatePassWithConfig returned null in '"
-             << soPath << "'\n";
-      return nullptr;
+  // Try parameterized factory if plugin-specific config is provided.
+  if (!configPath.empty()) {
+    using CreateWithConfigFn = MachineFunctionPass *(*)(const char *);
+    auto *CreateWithConfig = reinterpret_cast<CreateWithConfigFn>(
+        Lib.getAddressOfSymbol("flexclangCreatePassWithConfig"));
+    if (CreateWithConfig) {
+      auto Buf = MemoryBuffer::getFile(configPath);
+      if (!Buf) {
+        errs() << "flexclang: error: cannot read plugin config '"
+               << configPath << "': " << Buf.getError().message() << "\n";
+        return nullptr;
+      }
+      Pass *P = CreateWithConfig((*Buf)->getBuffer().str().c_str());
+      if (!P) {
+        errs() << "flexclang: error: flexclangCreatePassWithConfig returned null\n";
+        return nullptr;
+      }
+      return P;
     }
-    return P;
+    errs() << "flexclang: warning: config specified but plugin '"
+           << soPath << "' does not export flexclangCreatePassWithConfig\n";
   }
 
   // Fall back to simple factory.
@@ -725,14 +737,6 @@ void registerFlexPassConfigCallback(const FlexConfig &config) {
         if (TM.getTargetTriple().getArch() != Triple::amdgcn)
           return;
 
-        // Read YAML config file contents for parameterized plugins.
-        std::string yamlContents;
-        if (!config.configFile.empty()) {
-          auto Buf = MemoryBuffer::getFile(config.configFile);
-          if (Buf)
-            yamlContents = (*Buf)->getBuffer().str();
-        }
-
         for (const auto &rule : config.mirRules) {
           switch (rule.action) {
           case MIRPassRule::Disable: {
@@ -749,7 +753,7 @@ void registerFlexPassConfigCallback(const FlexConfig &config) {
           case MIRPassRule::Replace: {
             const void *ID = resolvePassID(rule.target);
             if (!ID) break;
-            Pass *Replacement = loadMIRPassPlugin(rule.plugin, yamlContents);
+            Pass *Replacement = loadMIRPassPlugin(rule.plugin, rule.config);
             if (!Replacement) break;
             PassConfig->substitutePass(ID, Replacement);
             if (config.verbose)
@@ -760,7 +764,7 @@ void registerFlexPassConfigCallback(const FlexConfig &config) {
           case MIRPassRule::InsertAfter: {
             const void *ID = resolvePassID(rule.target);
             if (!ID) break;
-            Pass *NewPass = loadMIRPassPlugin(rule.plugin, yamlContents);
+            Pass *NewPass = loadMIRPassPlugin(rule.plugin, rule.config);
             if (!NewPass) break;
             PassConfig->insertPass(ID, NewPass);
             if (config.verbose)
