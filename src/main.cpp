@@ -1,4 +1,5 @@
 // src/main.cpp
+#include "FlexConfig.h"
 #include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/DiagnosticIDs.h"
 #include "clang/Basic/DiagnosticOptions.h"
@@ -32,7 +33,34 @@ int main(int argc, const char **argv) {
   TextDiagnosticBuffer *DiagsBuffer = new TextDiagnosticBuffer;
   DiagnosticsEngine Diags(DiagID, DiagOpts, DiagsBuffer);
 
-  ArrayRef<const char *> Args(argv + 1, argv + argc);
+  SmallVector<const char *, 256> clangArgs;
+  flexclang::FlexConfig config =
+      flexclang::parseFlexArgs(clangArgs, argc, argv);
+
+  if (!config.configFile.empty()) {
+    if (!flexclang::parseFlexYAML(config, config.configFile))
+      return 1;
+  }
+
+  if (config.dryRun && config.hasModifications()) {
+    for (const auto &r : config.mirRules) {
+      const char *acts[] = {"disable", "replace", "insert-after"};
+      errs() << "flexclang: [dry-run] MIR " << acts[r.action]
+             << " target='" << r.target << "'";
+      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
+      errs() << "\n";
+    }
+    for (const auto &r : config.irRules) {
+      const char *acts[] = {"disable", "load-plugin"};
+      errs() << "flexclang: [dry-run] IR " << acts[r.action]
+             << " target='" << r.target << "'";
+      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
+      errs() << "\n";
+    }
+    return 0;
+  }
+
+  ArrayRef<const char *> Args(clangArgs);
   auto Invocation = std::make_shared<CompilerInvocation>();
   bool Success =
       CompilerInvocation::CreateFromArgs(*Invocation, Args, Diags, argv[0]);

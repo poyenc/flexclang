@@ -11,7 +11,10 @@ include_directories(${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 add_definitions(${LLVM_DEFINITIONS_LIST})
 
-add_executable(flexclang src/main.cpp)
+add_executable(flexclang
+  src/main.cpp
+  src/FlexConfig.cpp
+)
 
 llvm_map_components_to_libnames(LLVM_LIBS
   AMDGPUCodeGen AMDGPUAsmParser AMDGPUDesc AMDGPUInfo
