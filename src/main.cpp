@@ -120,13 +120,21 @@ int main(int argc, const char **argv) {
               auto *PIC = PB.getPassInstrumentationCallbacks();
               if (PIC) {
                 PIC->registerShouldRunOptionalPassCallback(
-                    [irDisableShared, verbose, irMatched](StringRef Name, Any) {
+                    [irDisableShared, verbose, irMatched,
+                     PIC](StringRef Name, Any) {
+                      // Translate class name (e.g. "InstCombinePass") to
+                      // pipeline name (e.g. "instcombine") so users can use
+                      // the same names as -print-after=.
+                      StringRef PipelineName =
+                          PIC->getPassNameForClassName(Name);
                       for (const auto &d : *irDisableShared) {
-                        if (Name.equals_insensitive(d)) {
+                        StringRef D(d);
+                        if (D.equals_insensitive(PipelineName) ||
+                            D.equals_insensitive(Name)) {
                           irMatched->insert(d);
                           if (verbose)
                             errs() << "flexclang: skipping IR pass '"
-                                   << Name << "'\n";
+                                   << Name << "' (" << PipelineName << ")\n";
                           return false;
                         }
                       }
