@@ -32,6 +32,7 @@ struct FlexConfig {
   bool verbose = false;
   bool verifyPlugins = false;
   bool dryRun = false;
+  std::vector<std::string> originalFlexArgs; // Raw --flex-* strings for driver mode injection
 
   bool hasModifications() const {
     return !mirRules.empty() || !irRules.empty();

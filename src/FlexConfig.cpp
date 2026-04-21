@@ -24,6 +24,10 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
   for (int i = 1; i < argc; ++i) {
     StringRef arg(argv[i]);
 
+    if (arg.starts_with("--flex-")) {
+      config.originalFlexArgs.push_back(argv[i]);
+    }
+
     if (arg.consume_front("--flex-disable-pass=")) {
       config.mirRules.push_back({MIRPassRule::Disable, arg.str(), ""});
     } else if (arg.consume_front("--flex-replace-pass=")) {
