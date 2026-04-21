@@ -222,6 +222,8 @@ Note: `-fpass-plugin=` is an upstream clang flag that works as-is. The YAML `loa
 |----------|---------|
 | `--flex-config=<path>` | Load YAML config file |
 | `--flex-list-passes` | Dump all MIR and IR pass names in pipeline order (reflects target, optimization level, and feature flags of the compilation) |
+| `--flex-verbose` | Print all pass modifications applied |
+| `--flex-verify-plugins` | Insert MachineVerifier after each plugin pass |
 
 ### 4.3 Environment Variables
 
@@ -298,7 +300,128 @@ extern "C" ::llvm::PassPluginLibraryInfo llvmGetPassPluginInfo() {
 
 This plugin works with both flexclang and upstream clang (`clang -fpass-plugin=./my-ir-pass.so`).
 
-## 6. Pass Identification and Discovery
+### 5.3 Optional: Parameterized MIR Pass Plugin
+
+Plugins that need configuration (e.g., a custom scheduler receiving a latency model path) can export an additional entry point:
+
+```cpp
+// Optional: factory function that receives YAML config string
+extern "C" llvm::MachineFunctionPass*
+flexclangCreatePassWithConfig(const char *yamlConfig);
+```
+
+If `flexclangCreatePassWithConfig` is found, flexclang calls it with the contents of the `--flex-config` YAML file (or an empty string if none). If not found, flexclang falls back to `flexclangCreatePass()`.
+
+This allows a single scheduler plugin to support multiple targets by reading the latency model path from the YAML config.
+
+### 5.4 Plugin Compatibility Requirements
+
+**ABI:** Plugins must be built with the same compiler flags as LLVM. In particular:
+- LLVM is built with `-fno-rtti`. Plugins **must** also use `-fno-rtti`, or dynamic_cast/typeid across the plugin boundary will crash.
+- Always use `$(llvm-config --cxxflags)` when building plugins to inherit the correct flags.
+
+**Version matching:** The plugin's LLVM headers and libraries must match the LLVM version that flexclang is linked against. Mixing LLVM versions causes ABI mismatches and silent corruption. When using ROCm's LLVM, build plugins against the same ROCm version.
+
+**Symbol visibility:** MIR pass plugins that link against LLVM libraries must use `-fPIC` and build as `MODULE` libraries (not `SHARED`). The `flexclangCreatePass` symbol must have default visibility (ensured by `extern "C"`).
+
+**Minimum LLVM version:** flexclang requires LLVM 21+ (the `RegisterTargetPassConfigCallback` API was stabilized in LLVM 21). The amd-staging branch based on LLVM 21+ is supported.
+
+## 6. Usage with HIP
+
+### 6.1 Drop-in Clang Replacement
+
+flexclang replaces clang directly for HIP compilation. It is **not** a wrapper around hipcc. Users invoke it the same way clang is invoked for HIP:
+
+```bash
+# Direct invocation (cc1-style)
+flexclang -cc1 -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
+  -emit-obj -o kernel.o kernel.hip
+
+# Driver-style invocation (if flexclang implements the driver layer)
+flexclang -x hip kernel.hip -o kernel.o --offload-arch=gfx942 \
+  --rocm-path=/opt/rocm
+```
+
+### 6.2 CMake Integration
+
+For CMake-based HIP projects:
+
+```bash
+cmake -DCMAKE_HIP_COMPILER=/path/to/flexclang \
+      -DCMAKE_HIP_ARCHITECTURES=gfx942 ..
+```
+
+### 6.3 Kernel Iteration Workflow
+
+Typical workflow for optimizing a kernel:
+
+```bash
+# 1. List available passes
+flexclang --flex-list-passes -cc1 -triple amdgcn-amd-amdhsa \
+  -target-cpu gfx942 -O2 -emit-obj -o /dev/null kernel.hip
+
+# 2. Compile baseline
+flexclang -cc1 -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
+  -O2 -S -o baseline.s kernel.hip
+
+# 3. Try disabling a pass
+flexclang --flex-disable-pass=si-form-memory-clauses \
+  -cc1 -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
+  -O2 -S -o modified.s kernel.hip
+
+# 4. Diff and analyze
+diff baseline.s modified.s
+```
+
+### 6.4 LLVM Version Compatibility
+
+flexclang must be built against the same LLVM version as the target ROCm installation. When using ROCm 6.x, build flexclang against the amd-staging branch corresponding to that ROCm release.
+
+## 7. Debugging
+
+### 7.1 flexclang Diagnostic Flags
+
+| Flag | Purpose |
+|------|---------|
+| `--flex-verbose` | Print all pass modifications applied (disable, replace, insert) |
+| `--flex-verify-plugins` | Insert `MachineVerifier` after each plugin pass to catch miscompilation |
+
+`--flex-verbose` output example:
+```
+flexclang: disabled MIR pass 'si-form-memory-clauses'
+flexclang: inserted MIR pass after 'machine-scheduler' from plugin ./my-pass.so
+flexclang: skipping IR pass 'InstCombinePass'
+```
+
+### 7.2 Using LLVM Debug Flags
+
+flexclang passes through all `-mllvm` flags. Useful debugging flags:
+
+```bash
+# Print MIR before/after a specific pass
+flexclang -mllvm -print-before=machine-scheduler \
+          -mllvm -print-after=machine-scheduler ...
+
+# Print MIR before/after all passes
+flexclang -mllvm -print-before-all -mllvm -print-after-all ...
+
+# Verify machine IR after every pass (slow but catches bugs)
+flexclang -mllvm -verify-machineinstrs ...
+
+# Print the pass pipeline structure
+flexclang -mllvm -debug-pass=Structure ...
+```
+
+### 7.3 Debugging a Custom MIR Pass Plugin
+
+When a custom pass produces wrong code:
+
+1. **Verify the pass runs:** Use `--flex-verbose` to confirm insertion
+2. **Dump MIR before/after:** Use `-mllvm -print-before=<your-pass> -mllvm -print-after=<your-pass>`
+3. **Run verifier:** Use `--flex-verify-plugins` to check MachineFunction invariants after your pass
+4. **Bisect:** Combine `--flex-disable-pass` to disable other passes and isolate the issue
+
+## 8. Pass Identification and Discovery
 
 ### 6.1 Listing Passes
 
@@ -347,7 +470,7 @@ The following passes are marked as critical. Disabling them produces a warning:
 | `virtregrewriter` | Required to map virtual to physical registers |
 | `si-fix-sgpr-copies` | Required for correct SGPR handling |
 
-## 7. Build System
+## 9. Build System
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
@@ -413,9 +536,9 @@ install(TARGETS flexclang DESTINATION bin)
 - CMake 3.20+
 - C++17 compiler
 
-## 8. Examples and Validation
+## 10. Examples and Validation
 
-### 8.1 Example IR Pass Plugin: Instruction Counter
+### 10.1 Example IR Pass Plugin: Instruction Counter
 
 A simple IR pass that prints the number of LLVM IR instructions per function. Demonstrates the upstream-compatible `llvmGetPassPluginInfo()` API.
 
@@ -464,7 +587,7 @@ flexclang -fpass-plugin=./ir-inst-counter.so \
   -x hip test_kernel.hip -o test_kernel.o --offload-arch=gfx942
 ```
 
-### 8.2 Example MIR Pass Plugin: NOP Inserter
+### 10.2 Example MIR Pass Plugin: NOP Inserter
 
 A MIR pass that inserts a `s_nop 0` before every MFMA instruction. This serves as a "canary" -- its effect is visible in the assembly output, proving the pass ran and was inserted at the right point.
 
@@ -527,7 +650,7 @@ flexclang --flex-insert-after=machine-scheduler:./mir-nop-inserter.so \
   -x hip test_kernel.hip -S -o test_kernel.s --offload-arch=gfx942
 ```
 
-### 8.3 Test HIP Kernel
+### 10.3 Test HIP Kernel
 
 A minimal GEMM kernel that exercises MFMA, global memory loads, LDS, and VALU -- all instruction types relevant to the scheduling and latency issues.
 
@@ -573,7 +696,7 @@ __global__ void gemm_16x16(const half* __restrict__ A,
 }
 ```
 
-### 8.4 YAML Config Examples
+### 10.4 YAML Config Examples
 
 **Example 1: Disable a pass**
 ```yaml
@@ -607,7 +730,7 @@ mir-passes:
     plugin: ./mir-nop-inserter.so
 ```
 
-### 8.5 Validation Script
+### 10.5 Validation Script
 
 A test script that validates the pass plugin system works end-to-end.
 
@@ -675,7 +798,7 @@ echo ""
 echo "All tests passed!"
 ```
 
-### 8.6 Expected Directory Structure
+### 10.6 Expected Directory Structure
 
 ```
 examples/
@@ -693,11 +816,11 @@ examples/
     combined.yaml                      # Example: combined IR + MIR
 ```
 
-## 9. Custom Scheduler with Corrected Latency Model (Future Work)
+## 11. Custom Scheduler with Corrected Latency Model (Future Work)
 
 This section outlines the planned custom scheduler pass that will use measured latency data. Implementation details will be designed separately.
 
-### 9.1 Concept
+### 11.1 Concept
 
 A custom MIR pass plugin (`flex-scheduler.so`) that:
 1. Reads a per-target latency model file (YAML) with measured instruction latencies
@@ -705,7 +828,7 @@ A custom MIR pass plugin (`flex-scheduler.so`) that:
 3. Ships with default latency models for gfx942, gfx950 (to be measured and refined)
 4. Allows users to supply their own measurements (e.g., from rocprofv3)
 
-### 9.2 Latency Model Format (preliminary)
+### 11.2 Latency Model Format (preliminary)
 
 ```yaml
 # gfx942-latency.yaml
@@ -731,7 +854,7 @@ instruction-latencies:
   # ... etc
 ```
 
-### 9.3 Integration
+### 11.3 Integration
 
 ```yaml
 # flexclang.yaml
@@ -744,11 +867,11 @@ latency-model:
   file: ./gfx942-latency.yaml
 ```
 
-## 10. Agent Team Setup
+## 12. Agent Team Setup
 
 For iterative refinement of this design, a two-member agent team is defined:
 
-### 10.1 Team Members
+### 12.1 Team Members
 
 **AMDGPU HIP Kernel Developer (Reviewer)**
 - Role: Review designs from the kernel developer's perspective
@@ -762,7 +885,7 @@ For iterative refinement of this design, a two-member agent team is defined:
 - Questions to ask: "How does this interact with X in LLVM?", "Is this approach maintainable?"
 - Knowledge: LLVM pass infrastructure, clang internals, compiler plugin APIs
 
-### 10.2 Agent Definitions
+### 12.2 Agent Definitions
 
 Agent definitions are placed in `.claude/agents/`:
 
@@ -825,7 +948,7 @@ The LLVM source code is at /home/poyechen/workspace/repo/llvm-project.
 Read actual source files to verify your proposals are implementable.
 ```
 
-### 10.3 Review Loop
+### 12.3 Review Loop
 
 The agent team operates in a review loop:
 1. Clang System Designer reads the current spec and proposes refinements
@@ -833,16 +956,19 @@ The agent team operates in a review loop:
 3. Repeat until both agree the design addresses key use cases
 4. Final spec is written and committed
 
-## 11. Scope and Non-Goals
+## 13. Scope and Non-Goals
 
 ### In Scope (Phase 1)
-- flexclang binary that links against installed LLVM/Clang
+- flexclang binary that links against installed LLVM/Clang (requires LLVM 21+)
 - Drop-in clang replacement (all standard flags work, including `-fpass-plugin=`)
 - YAML config + CLI flags for MIR pass modifications (disable, replace, insert-after)
-- MIR pass plugin loading via `.so` + `flexclangCreatePass()` API
+- MIR pass plugin loading via `.so` + `flexclangCreatePass()` / `flexclangCreatePassWithConfig()` API
 - Per-pass disable for IR passes (`--flex-disable-ir-pass`)
 - `--flex-list-passes` for pipeline discovery
+- `--flex-verbose` and `--flex-verify-plugins` for debugging
 - Critical pass warnings
+- Plugin compatibility documentation (ABI, RTTI, version matching)
+- Usage with HIP documentation (CMake integration, kernel iteration workflow)
 - Example plugins (IR + MIR) and validation script
 
 ### In Scope (Phase 2, future)
