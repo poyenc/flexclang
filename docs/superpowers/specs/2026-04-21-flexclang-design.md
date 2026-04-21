@@ -12,9 +12,9 @@ AMDGPU HIP kernel developers face several pain points with the upstream LLVM/Cla
 
 2. **Inaccurate instruction latency model.** CDNA/GFX9 (gfx942, gfx950) hardcodes global memory loads to 80 cycles (`WriteVMEM` in SISchedule.td) and LDS to 5 cycles (`WriteLDS`). RDNA/GFX10+ uses 320/20 respectively. These values are static per architecture generation and don't reflect real measured latencies that vary by cache behavior and memory traffic patterns.
 
-3. **IGLP ordering undone by rescheduling.** The `UnclusteredHighRPReschedule` stage explicitly skips IGLP mutation handling (GCNSchedStrategy.cpp:1780). When register pressure is high, this stage reschedules the region without respecting IGLP constraints, effectively undoing the user-specified instruction interleaving.
+3. **IGLP ordering undone by rescheduling.** The `UnclusteredHighRPReschedule` stage explicitly skips IGLP mutation handling (GCNSchedStrategy.cpp:1780). When register pressure is high, this stage reschedules the region without respecting IGLP constraints, effectively undoing the user-specified instruction interleaving. Note: this is a stage *within* the `GCNSchedStrategy` class, not a separate MIR pass — it cannot be disabled independently via pass-level controls. Addressing this requires replacing the `machine-scheduler` pass entirely with a custom scheduler plugin that preserves IGLP constraints (planned for Phase 2).
 
-4. **No user control of register allocation.** The VGPR allocator treats VGPRs and AGPRs as a single pool via `AV_*` register classes. Users cannot hint that a variable should use AGPR or request double-buffering via separate register allocations.
+4. **No user control of register allocation.** The VGPR allocator treats VGPRs and AGPRs as a single pool via `AV_*` register classes. Users cannot hint that a variable should use AGPR or request double-buffering via separate register allocations. Note: writing a custom register allocator is prohibitively complex. flexclang's pass replace mechanism (`--flex-replace-pass=greedy:my-regalloc.so`) makes this theoretically possible but is not a practical solution path. Register allocation control is a non-goal for Phase 1 and Phase 2. A more feasible approach (future investigation) would be a MIR annotation pass inserted before regalloc that adjusts register class constraints or provides pressure hints.
 
 5. **No per-pass enable/disable for Machine IR passes.** The only controls are `-start-before`/`-stop-after` for the legacy PM codegen pipeline. There's no mechanism to disable, replace, or insert individual MIR passes.
 
@@ -224,6 +224,7 @@ Note: `-fpass-plugin=` is an upstream clang flag that works as-is. The YAML `loa
 | `--flex-list-passes` | Dump all MIR and IR pass names in pipeline order (reflects target, optimization level, and feature flags of the compilation) |
 | `--flex-verbose` | Print all pass modifications applied |
 | `--flex-verify-plugins` | Insert MachineVerifier after each plugin pass |
+| `--flex-dry-run` | Print what modifications would be applied without compiling |
 
 ### 4.3 Environment Variables
 
@@ -266,8 +267,13 @@ extern "C" const char* flexclangPassName() {
 
 Build:
 ```bash
+# For target-independent MIR passes (no AMDGPU:: opcodes):
 clang++ -shared -fPIC -o my-pass.so my-mir-pass.cpp \
   $(llvm-config --cxxflags --ldflags --libs codegen core support)
+
+# For AMDGPU-specific MIR passes (using AMDGPU:: opcodes):
+# See Section 10.2 for the full build line with AMDGPU include paths.
+# In ROCm installations, use /opt/rocm/llvm/bin/llvm-config.
 ```
 
 ### 5.2 IR Pass Plugin (upstream-compatible)
@@ -314,7 +320,37 @@ If `flexclangCreatePassWithConfig` is found, flexclang calls it with the content
 
 This allows a single scheduler plugin to support multiple targets by reading the latency model path from the YAML config.
 
-### 5.4 Plugin Compatibility Requirements
+### 5.4 Accessing Analysis Passes from Plugins
+
+MIR pass plugins can access LLVM analysis passes using the standard `getAnalysis<T>()` mechanism. Declare dependencies in `getAnalysisUsage()`:
+
+```cpp
+void getAnalysisUsage(AnalysisUsage &AU) const override {
+  AU.addRequired<LiveIntervals>();
+  AU.addRequired<MachineLoopInfo>();
+  AU.addRequired<SlotIndexes>();
+  // Mark as preserving analyses if your pass doesn't invalidate them
+  AU.setPreservesAll(); // or selectively: AU.addPreserved<LiveIntervals>();
+  MachineFunctionPass::getAnalysisUsage(AU);
+}
+
+bool runOnMachineFunction(MachineFunction &MF) override {
+  auto &LIS = getAnalysis<LiveIntervals>();
+  auto &MLI = getAnalysis<MachineLoopInfo>();
+  // ... use analyses ...
+}
+```
+
+**Analysis invalidation:** If your pass modifies the MachineFunction (returns `true`), you must either preserve or invalidate dependent analyses. If a later pass in the pipeline requires an analysis your pass invalidated without preserving, LLVM will recompute it automatically. However, incorrect preservation declarations (claiming to preserve an analysis you actually invalidated) will cause silent miscompilation. Use `--flex-verify-plugins` to catch these issues.
+
+Commonly used analyses for scheduling and register-related plugins:
+- `LiveIntervals` -- live ranges for virtual registers
+- `SlotIndexes` -- instruction numbering for live range queries
+- `MachineLoopInfo` -- loop structure for scheduling heuristics
+- `MachineDominatorTree` -- dominance for control flow analysis
+- `MachineBlockFrequencyInfo` -- block frequency for spill cost decisions
+
+### 5.5 Plugin Compatibility Requirements
 
 **ABI:** Plugins must be built with the same compiler flags as LLVM. In particular:
 - LLVM is built with `-fno-rtti`. Plugins **must** also use `-fno-rtti`, or dynamic_cast/typeid across the plugin boundary will crash.
@@ -421,9 +457,32 @@ When a custom pass produces wrong code:
 3. **Run verifier:** Use `--flex-verify-plugins` to check MachineFunction invariants after your pass
 4. **Bisect:** Combine `--flex-disable-pass` to disable other passes and isolate the issue
 
+### 7.4 MIR Round-Trip Debugging
+
+For isolating issues in a custom MIR pass, dump the MIR before the pass and re-run it standalone using `llc -run-pass`:
+
+```bash
+# 1. Dump MIR right before your custom pass
+flexclang -mllvm -stop-before=my-custom-pass \
+  -x hip kernel.hip -o pre.mir --offload-arch=gfx942
+
+# 2. Run just your pass on the dumped MIR
+llc -run-pass=my-custom-pass -march=amdgcn -mcpu=gfx942 \
+  pre.mir -o post.mir
+
+# 3. Compare input and output MIR
+diff pre.mir post.mir
+
+# 4. Optionally, continue compilation from the post-pass MIR
+llc -start-after=my-custom-pass -march=amdgcn -mcpu=gfx942 \
+  post.mir -o kernel.s
+```
+
+This workflow lets you iterate on a pass without re-running the full compilation pipeline. Note: `llc -run-pass` requires the pass to be registered in the pass registry; dynamically loaded plugin passes need to be loaded via `llc -load=./my-pass.so -run-pass=...`.
+
 ## 8. Pass Identification and Discovery
 
-### 6.1 Listing Passes
+### 8.1 Listing Passes
 
 ```bash
 # List all MIR and IR passes for a target
@@ -451,15 +510,15 @@ Output format:
 Use --flex-insert-after=<pass-name>:<plugin.so> to insert after any pass listed above.
 ```
 
-### 6.2 Pass Name Source
+### 8.2 Pass Name Source
 
 MIR pass names are the **pass argument strings** registered via `INITIALIZE_PASS` (typically the `DEBUG_TYPE` macro, e.g., `"si-form-memory-clauses"`). These are the same strings accepted by LLVM's `-start-before`/`-stop-after` flags and resolved via `PassRegistry::getPassInfo(StringRef)`. Note: this is distinct from `Pass::getPassName()`, which returns the human-readable description.
 
 IR pass names are the textual pipeline names from `PassRegistry.def` and `AMDGPUPassRegistry.def`. Passes that return `true` from `isRequired()` cannot be disabled by `shouldRunOptionalPassCallback`.
 
-### 6.3 Critical Passes
+### 8.3 Critical Passes
 
-The following passes are marked as critical. Disabling them produces a warning:
+The following passes are marked as critical. Disabling them produces a **non-fatal warning** — the compilation proceeds regardless. This is intentional: advanced users (e.g., those who insert their own waitcnt management via inline asm) may legitimately need to disable even critical passes. The warning serves as an explicit acknowledgment of risk, not a blocker.
 
 | Pass | Reason |
 |------|--------|
@@ -598,6 +657,10 @@ A MIR pass that inserts a `s_nop 0` before every MFMA instruction. This serves a
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 
+// AMDGPU-specific headers for opcode enums (e.g., AMDGPU::S_NOP)
+#include "AMDGPU.h"
+#include "SIInstrInfo.h"
+
 using namespace llvm;
 
 class MIRNopInserter : public MachineFunctionPass {
@@ -638,11 +701,19 @@ extern "C" const char* flexclangPassName() {
 }
 ```
 
-Build:
+Build (note: AMDGPU-specific plugins need the AMDGPU include path and libraries):
 ```bash
+# LLVM_BUILD_DIR is the LLVM build or install directory
+# For ROCm: LLVM_BUILD_DIR=/opt/rocm/llvm
+LLVM_CONFIG=${LLVM_BUILD_DIR}/bin/llvm-config
+
 clang++ -shared -fPIC -o mir-nop-inserter.so MIRNopInserter.cpp \
-  $(llvm-config --cxxflags --ldflags --libs amdgpucodegen codegen core support)
+  -I${LLVM_BUILD_DIR}/lib/Target/AMDGPU \
+  -I$(dirname $(${LLVM_CONFIG} --includedir))/../lib/Target/AMDGPU \
+  $(${LLVM_CONFIG} --cxxflags --ldflags --libs amdgpucodegen codegen core support)
 ```
+
+Note: the AMDGPU target headers (`AMDGPU.h`, `SIInstrInfo.h`) and generated TableGen files (`AMDGPUGenInstrInfo.inc`) are in the LLVM build tree under `lib/Target/AMDGPU/`. In ROCm installations, these may be at `/opt/rocm/llvm/lib/Target/AMDGPU/`. Plugins that only use target-independent APIs (no `AMDGPU::` opcodes) do not need this include path.
 
 Usage:
 ```bash
@@ -652,47 +723,49 @@ flexclang --flex-insert-after=machine-scheduler:./mir-nop-inserter.so \
 
 ### 10.3 Test HIP Kernel
 
-A minimal GEMM kernel that exercises MFMA, global memory loads, LDS, and VALU -- all instruction types relevant to the scheduling and latency issues.
+A minimal kernel that explicitly uses MFMA builtins to guarantee MFMA instructions appear in the generated assembly. This is essential for validating the MIR NOP inserter example (Section 10.2), which checks for MFMA opcodes. The kernel also exercises global memory loads, LDS, and VALU to cover the instruction types relevant to scheduling and latency issues.
 
 ```cpp
 // examples/test_kernel.hip
 #include <hip/hip_runtime.h>
 
-// Simple 16x16 MFMA-based GEMM tile
-// Exercises: global_load, ds_read, v_mfma, v_mov, s_waitcnt
-__global__ void gemm_16x16(const half* __restrict__ A,
-                           const half* __restrict__ B,
-                           float* __restrict__ C,
-                           int M, int N, int K) {
-  // Thread identification
+using half4 = __attribute__((ext_vector_type(4))) _Float16;
+using float4 = __attribute__((ext_vector_type(4))) float;
+using float16 = __attribute__((ext_vector_type(16))) float;
+
+// Minimal kernel that guarantees MFMA instructions in the output.
+// Exercises: global_load_dwordx4, ds_read, v_mfma_f32_16x16x16f16,
+//            v_mov, s_waitcnt
+__global__ void mfma_gemm_tile(const half4* __restrict__ A,
+                               const half4* __restrict__ B,
+                               float16* __restrict__ C,
+                               int K_tiles) {
   int tx = threadIdx.x;
-  int bx = blockIdx.x;
-  int by = blockIdx.y;
 
-  // Shared memory for tiles
-  __shared__ half tileA[16][16];
-  __shared__ half tileB[16][16];
+  // Shared memory for A and B tiles
+  __shared__ half4 tileA[64];
+  __shared__ half4 tileB[64];
 
-  float acc = 0.0f;
+  // Accumulator (16 floats for 16x16 output tile)
+  float16 acc = {0};
 
-  for (int k = 0; k < K; k += 16) {
-    // Load A tile to shared memory
-    tileA[tx / 16][tx % 16] = A[(by * 16 + tx / 16) * K + k + tx % 16];
-    // Load B tile to shared memory
-    tileB[tx / 16][tx % 16] = B[(k + tx / 16) * N + bx * 16 + tx % 16];
-
+  for (int k = 0; k < K_tiles; ++k) {
+    // Global load -> LDS
+    tileA[tx] = A[blockIdx.y * K_tiles * 64 + k * 64 + tx];
+    tileB[tx] = B[blockIdx.x * K_tiles * 64 + k * 64 + tx];
     __syncthreads();
 
-    // Accumulate
-    for (int kk = 0; kk < 16; ++kk) {
-      acc += __half2float(tileA[tx / 16][kk]) *
-             __half2float(tileB[kk][tx % 16]);
+    // MFMA: F32 += F16 * F16 (16x16x16)
+    // Each thread contributes to a 16x16 output tile
+    for (int i = 0; i < 4; ++i) {
+      half4 a = tileA[i * 16 + tx % 16];
+      half4 b = tileB[i * 16 + tx / 16];
+      acc = __builtin_amdgcn_mfma_f32_16x16x16f16(a, b, acc, 0, 0, 0);
     }
-
     __syncthreads();
   }
 
-  C[(by * 16 + tx / 16) * N + bx * 16 + tx % 16] = acc;
+  C[blockIdx.y * gridDim.x * 64 + blockIdx.x * 64 + tx] = acc;
 }
 ```
 
@@ -798,7 +871,44 @@ echo ""
 echo "All tests passed!"
 ```
 
-### 10.6 Expected Directory Structure
+### 10.6 Example Plugin CMakeLists.txt
+
+A minimal CMakeLists.txt for building MIR pass plugins (used by the examples):
+
+```cmake
+# examples/mir-pass-nop-inserter/CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(MIRNopInserter)
+
+find_package(LLVM REQUIRED CONFIG)
+message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
+
+include_directories(${LLVM_INCLUDE_DIRS})
+# AMDGPU target headers (for AMDGPU:: opcodes)
+include_directories(${LLVM_BUILD_DIR}/lib/Target/AMDGPU)
+include_directories(${LLVM_MAIN_SRC_DIR}/lib/Target/AMDGPU)
+
+separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${LLVM_DEFINITIONS_LIST})
+
+# Build as MODULE (not SHARED) -- loaded at runtime, not linked
+add_library(mir-nop-inserter MODULE MIRNopInserter.cpp)
+target_compile_options(mir-nop-inserter PRIVATE -fno-rtti -fPIC)
+
+# No need to link LLVM libs -- symbols resolved at load time from flexclang
+set_target_properties(mir-nop-inserter PROPERTIES
+  PREFIX ""           # produce "mir-nop-inserter.so", not "libmir-nop-inserter.so"
+  SUFFIX ".so"
+)
+```
+
+Build:
+```bash
+cmake -B build -DLLVM_DIR=/opt/rocm/llvm/lib/cmake/llvm .
+cmake --build build
+```
+
+### 10.7 Expected Directory Structure
 
 ```
 examples/
@@ -965,14 +1075,16 @@ The agent team operates in a review loop:
 - MIR pass plugin loading via `.so` + `flexclangCreatePass()` / `flexclangCreatePassWithConfig()` API
 - Per-pass disable for IR passes (`--flex-disable-ir-pass`)
 - `--flex-list-passes` for pipeline discovery
-- `--flex-verbose` and `--flex-verify-plugins` for debugging
-- Critical pass warnings
+- `--flex-verbose`, `--flex-verify-plugins`, and `--flex-dry-run` for debugging and validation
+- Critical pass warnings (non-fatal)
 - Plugin compatibility documentation (ABI, RTTI, version matching)
+- Plugin analysis pass usage documentation
 - Usage with HIP documentation (CMake integration, kernel iteration workflow)
-- Example plugins (IR + MIR) and validation script
+- Example plugins (IR + MIR) with CMakeLists.txt and validation script
 
 ### In Scope (Phase 2, future)
 - Custom scheduler pass with corrected latency model
+- Custom scheduler that preserves IGLP constraints (addresses Pain Point 3)
 - Default latency models for gfx942, gfx950
 - Latency model YAML format and loading
 - Integration with rocprofv3 measurement pipeline
@@ -980,6 +1092,7 @@ The agent team operates in a review loop:
 ### Non-Goals
 - Forking or modifying LLVM source code
 - Replacing the entire codegen pipeline (partial modifications only)
+- Custom register allocator or direct register allocation control (Pain Point 4 — writing a custom regalloc is prohibitively complex; see Section 1 for discussion of possible future approaches)
 - Supporting non-AMDGPU targets (AMDGPU-specific features only; generic clang features work for all targets)
 - GUI or IDE integration
 - Automatic performance tuning (the agent loop is external to flexclang)
