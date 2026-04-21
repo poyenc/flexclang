@@ -425,7 +425,289 @@ install(TARGETS flexclang DESTINATION bin)
 - CMake 3.20+
 - C++17 compiler
 
-## 8. Custom Scheduler with Corrected Latency Model (Future Work)
+## 8. Examples and Validation
+
+### 8.1 Example IR Pass Plugin: Instruction Counter
+
+A simple IR pass that prints the number of LLVM IR instructions per function. Demonstrates the upstream-compatible `llvmGetPassPluginInfo()` API.
+
+```cpp
+// examples/ir-pass-counter/IRInstCounter.cpp
+#include "llvm/IR/Function.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
+#include "llvm/Support/raw_ostream.h"
+
+using namespace llvm;
+
+class IRInstCounter : public PassInfoMixin<IRInstCounter> {
+public:
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM) {
+    unsigned Count = 0;
+    for (auto &BB : F)
+      Count += BB.size();
+    errs() << "[IRInstCounter] " << F.getName() << ": " << Count
+           << " instructions\n";
+    return PreservedAnalyses::all();
+  }
+};
+
+extern "C" ::llvm::PassPluginLibraryInfo llvmGetPassPluginInfo() {
+  return {LLVM_PLUGIN_API_VERSION, "IRInstCounter", "0.1",
+    [](PassBuilder &PB) {
+      PB.registerOptimizerLastEPCallback(
+        [](ModulePassManager &MPM, OptimizationLevel) {
+          MPM.addPass(createModuleToFunctionPassAdaptor(IRInstCounter()));
+        });
+    }};
+}
+```
+
+Build:
+```bash
+clang++ -shared -fPIC -o ir-inst-counter.so IRInstCounter.cpp \
+  $(llvm-config --cxxflags --ldflags --libs core support passes)
+```
+
+Usage (works with both flexclang and upstream clang):
+```bash
+flexclang --flex-ir-plugin=./ir-inst-counter.so \
+  -x hip test_kernel.hip -o test_kernel.o --offload-arch=gfx942
+```
+
+### 8.2 Example MIR Pass Plugin: NOP Inserter
+
+A MIR pass that inserts a `s_nop 0` before every MFMA instruction. This serves as a "canary" -- its effect is visible in the assembly output, proving the pass ran and was inserted at the right point.
+
+```cpp
+// examples/mir-pass-nop-inserter/MIRNopInserter.cpp
+#include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/CodeGen/MachineFunction.h"
+
+using namespace llvm;
+
+class MIRNopInserter : public MachineFunctionPass {
+public:
+  static char ID;
+  MIRNopInserter() : MachineFunctionPass(ID) {}
+
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+    bool Changed = false;
+
+    for (auto &MBB : MF) {
+      for (auto MI = MBB.begin(); MI != MBB.end(); ++MI) {
+        // Check if this is an MFMA instruction (opcode name contains "MFMA")
+        if (TII->getName(MI->getOpcode()).contains("MFMA")) {
+          BuildMI(MBB, MI, MI->getDebugLoc(),
+                  TII->get(AMDGPU::S_NOP)).addImm(0);
+          Changed = true;
+        }
+      }
+    }
+
+    if (Changed)
+      errs() << "[MIRNopInserter] Inserted NOPs in " << MF.getName() << "\n";
+    return Changed;
+  }
+
+  StringRef getPassName() const override { return "mir-nop-inserter"; }
+};
+char MIRNopInserter::ID = 0;
+
+extern "C" MachineFunctionPass* flexclangCreatePass() {
+  return new MIRNopInserter();
+}
+
+extern "C" const char* flexclangPassName() {
+  return "mir-nop-inserter";
+}
+```
+
+Build:
+```bash
+clang++ -shared -fPIC -o mir-nop-inserter.so MIRNopInserter.cpp \
+  $(llvm-config --cxxflags --ldflags --libs amdgpucodegen codegen core support)
+```
+
+Usage:
+```bash
+flexclang --flex-insert-after=machine-scheduler:./mir-nop-inserter.so \
+  -x hip test_kernel.hip -S -o test_kernel.s --offload-arch=gfx942
+```
+
+### 8.3 Test HIP Kernel
+
+A minimal GEMM kernel that exercises MFMA, global memory loads, LDS, and VALU -- all instruction types relevant to the scheduling and latency issues.
+
+```cpp
+// examples/test_kernel.hip
+#include <hip/hip_runtime.h>
+
+// Simple 16x16 MFMA-based GEMM tile
+// Exercises: global_load, ds_read, v_mfma, v_mov, s_waitcnt
+__global__ void gemm_16x16(const half* __restrict__ A,
+                           const half* __restrict__ B,
+                           float* __restrict__ C,
+                           int M, int N, int K) {
+  // Thread identification
+  int tx = threadIdx.x;
+  int bx = blockIdx.x;
+  int by = blockIdx.y;
+
+  // Shared memory for tiles
+  __shared__ half tileA[16][16];
+  __shared__ half tileB[16][16];
+
+  float acc = 0.0f;
+
+  for (int k = 0; k < K; k += 16) {
+    // Load A tile to shared memory
+    tileA[tx / 16][tx % 16] = A[(by * 16 + tx / 16) * K + k + tx % 16];
+    // Load B tile to shared memory
+    tileB[tx / 16][tx % 16] = B[(k + tx / 16) * N + bx * 16 + tx % 16];
+
+    __syncthreads();
+
+    // Accumulate
+    for (int kk = 0; kk < 16; ++kk) {
+      acc += __half2float(tileA[tx / 16][kk]) *
+             __half2float(tileB[kk][tx % 16]);
+    }
+
+    __syncthreads();
+  }
+
+  C[(by * 16 + tx / 16) * N + bx * 16 + tx % 16] = acc;
+}
+```
+
+### 8.4 YAML Config Examples
+
+**Example 1: Disable a pass**
+```yaml
+# examples/configs/disable-memory-clauses.yaml
+mir-passes:
+  - action: disable
+    target: si-form-memory-clauses
+```
+
+**Example 2: Insert custom MIR pass after scheduler**
+```yaml
+# examples/configs/insert-nop-after-sched.yaml
+mir-passes:
+  - action: insert-after
+    target: machine-scheduler
+    plugin: ./mir-nop-inserter.so
+```
+
+**Example 3: Combined IR + MIR modifications**
+```yaml
+# examples/configs/combined.yaml
+ir-passes:
+  - action: load-plugin
+    plugin: ./ir-inst-counter.so
+  - action: disable
+    target: instcombine
+
+mir-passes:
+  - action: disable
+    target: si-form-memory-clauses
+  - action: insert-after
+    target: machine-scheduler
+    plugin: ./mir-nop-inserter.so
+```
+
+### 8.5 Validation Script
+
+A test script that validates the pass plugin system works end-to-end.
+
+```bash
+#!/bin/bash
+# examples/validate.sh
+# Validates flexclang pass plugin system
+
+set -e
+FLEXCLANG=${FLEXCLANG:-./build/flexclang}
+ARCH=${ARCH:-gfx942}
+KERNEL=examples/test_kernel.hip
+
+echo "=== Test 1: Baseline compilation ==="
+$FLEXCLANG -x hip $KERNEL -S -o /tmp/baseline.s --offload-arch=$ARCH -O2
+echo "PASS: Baseline compiles"
+
+echo "=== Test 2: --flex-list-passes ==="
+$FLEXCLANG --flex-list-passes -x hip /dev/null --offload-arch=$ARCH -O2 \
+  > /tmp/pass-list.txt 2>&1
+grep -q "machine-scheduler" /tmp/pass-list.txt
+echo "PASS: machine-scheduler found in pass list"
+
+echo "=== Test 3: Disable pass ==="
+$FLEXCLANG --flex-disable-pass=si-form-memory-clauses \
+  -x hip $KERNEL -S -o /tmp/disabled.s --offload-arch=$ARCH -O2
+# Assembly should differ from baseline (fewer clause formations)
+if diff -q /tmp/baseline.s /tmp/disabled.s > /dev/null 2>&1; then
+  echo "WARNING: disabling si-form-memory-clauses produced identical output"
+else
+  echo "PASS: Disabling pass changed assembly output"
+fi
+
+echo "=== Test 4: IR pass plugin ==="
+$FLEXCLANG --flex-ir-plugin=./ir-inst-counter.so \
+  -x hip $KERNEL -S -o /tmp/ir-plugin.s --offload-arch=$ARCH -O2 \
+  2>/tmp/ir-plugin-stderr.txt
+grep -q "\[IRInstCounter\]" /tmp/ir-plugin-stderr.txt
+echo "PASS: IR pass plugin ran and produced output"
+
+echo "=== Test 5: MIR pass plugin ==="
+$FLEXCLANG --flex-insert-after=machine-scheduler:./mir-nop-inserter.so \
+  -x hip $KERNEL -S -o /tmp/mir-plugin.s --offload-arch=$ARCH -O2 \
+  2>/tmp/mir-plugin-stderr.txt
+grep -q "\[MIRNopInserter\]" /tmp/mir-plugin-stderr.txt
+# Verify s_nop appears more in plugin output than baseline
+BASELINE_NOPS=$(grep -c "s_nop" /tmp/baseline.s || true)
+PLUGIN_NOPS=$(grep -c "s_nop" /tmp/mir-plugin.s || true)
+if [ "$PLUGIN_NOPS" -gt "$BASELINE_NOPS" ]; then
+  echo "PASS: MIR pass plugin inserted NOPs (baseline=$BASELINE_NOPS, plugin=$PLUGIN_NOPS)"
+else
+  echo "FAIL: Expected more s_nop instructions"
+  exit 1
+fi
+
+echo "=== Test 6: YAML config ==="
+$FLEXCLANG --flex-config=examples/configs/combined.yaml \
+  -x hip $KERNEL -S -o /tmp/yaml-config.s --offload-arch=$ARCH -O2 \
+  2>/tmp/yaml-stderr.txt
+grep -q "\[IRInstCounter\]" /tmp/yaml-stderr.txt
+grep -q "\[MIRNopInserter\]" /tmp/yaml-stderr.txt
+echo "PASS: YAML config loaded both IR and MIR plugins"
+
+echo ""
+echo "All tests passed!"
+```
+
+### 8.6 Expected Directory Structure
+
+```
+examples/
+  test_kernel.hip                      # Test HIP kernel
+  validate.sh                          # Validation script
+  ir-pass-counter/
+    IRInstCounter.cpp                  # IR pass plugin source
+    CMakeLists.txt                     # Build config for the plugin
+  mir-pass-nop-inserter/
+    MIRNopInserter.cpp                 # MIR pass plugin source
+    CMakeLists.txt                     # Build config for the plugin
+  configs/
+    disable-memory-clauses.yaml        # Example: disable a pass
+    insert-nop-after-sched.yaml        # Example: insert MIR pass
+    combined.yaml                      # Example: combined IR + MIR
+```
+
+## 9. Custom Scheduler with Corrected Latency Model (Future Work)
 
 This section outlines the planned custom scheduler pass that will use measured latency data. Implementation details will be designed separately.
 
@@ -476,11 +758,11 @@ latency-model:
   file: ./gfx942-latency.yaml
 ```
 
-## 9. Agent Team Setup
+## 10. Agent Team Setup
 
 For iterative refinement of this design, a two-member agent team is defined:
 
-### 9.1 Team Members
+### 10.1 Team Members
 
 **AMDGPU HIP Kernel Developer (Reviewer)**
 - Role: Review designs from the kernel developer's perspective
@@ -494,7 +776,7 @@ For iterative refinement of this design, a two-member agent team is defined:
 - Questions to ask: "How does this interact with X in LLVM?", "Is this approach maintainable?"
 - Knowledge: LLVM pass infrastructure, clang internals, compiler plugin APIs
 
-### 9.2 Agent Definitions
+### 10.2 Agent Definitions
 
 Agent definitions are placed in `.claude/agents/`:
 
@@ -557,7 +839,7 @@ The LLVM source code is at /home/poyechen/workspace/repo/llvm-project.
 Read actual source files to verify your proposals are implementable.
 ```
 
-### 9.3 Review Loop
+### 10.3 Review Loop
 
 The agent team operates in a review loop:
 1. Clang System Designer reads the current spec and proposes refinements
@@ -565,7 +847,7 @@ The agent team operates in a review loop:
 3. Repeat until both agree the design addresses key use cases
 4. Final spec is written and committed
 
-## 10. Scope and Non-Goals
+## 11. Scope and Non-Goals
 
 ### In Scope (Phase 1)
 - flexclang binary that links against installed LLVM/Clang
