@@ -10,9 +10,9 @@ AMDGPU HIP kernel developers face several pain points with the upstream LLVM/Cla
 
 1. **Scheduler defaults to maximize occupancy** instead of ILP. The default `GCNMaxOccupancySchedStrategy` (AMDGPUTargetMachine.cpp:1346) prioritizes register pressure reduction for higher occupancy, often at the cost of instruction-level parallelism.
 
-2. **Inaccurate instruction latency model.** Global memory loads are hardcoded to 80 cycles (`WriteVMEM` in SISchedule.td), LDS to 5 cycles (`WriteLDS`). These values are static across all GFX9 targets and don't reflect real measured latencies that vary by workload and memory access pattern.
+2. **Inaccurate instruction latency model.** CDNA/GFX9 (gfx942, gfx950) hardcodes global memory loads to 80 cycles (`WriteVMEM` in SISchedule.td) and LDS to 5 cycles (`WriteLDS`). RDNA/GFX10+ uses 320/20 respectively. These values are static per architecture generation and don't reflect real measured latencies that vary by cache behavior and memory traffic patterns.
 
-3. **IGLP intrinsics partially ignored.** The `UnclusteredHighRPReschedule` stage explicitly skips IGLP mutation handling (GCNSchedStrategy.cpp:1780), potentially overriding user-specified instruction interleaving.
+3. **IGLP ordering undone by rescheduling.** The `UnclusteredHighRPReschedule` stage explicitly skips IGLP mutation handling (GCNSchedStrategy.cpp:1780). When register pressure is high, this stage reschedules the region without respecting IGLP constraints, effectively undoing the user-specified instruction interleaving.
 
 4. **No user control of register allocation.** The VGPR allocator treats VGPRs and AGPRs as a single pool via `AV_*` register classes. Users cannot hint that a variable should use AGPR or request double-buffering via separate register allocations.
 
@@ -89,7 +89,7 @@ flexclang's `main()` performs these steps:
 5. Register MIR pass modifications via `RegisterTargetPassConfigCallback`. This callback fires after `createPassConfig()` returns the `GCNPassConfig` but before `addISelPasses()`/`addMachinePasses()` execute. In the callback, call `disablePass()`, `substitutePass()`, and `insertPass()` on the TargetPassConfig based on the parsed config.
 6. Create a `CompilerInstance` + `CompilerInvocation` from remaining args (standard clang path).
 7. Register IR pass modifications:
-   - For each `ir-passes.disable` entry: register a `shouldRunOptionalPassCallback` that returns false for that pass name.
+   - For each `ir-passes.disable` entry: register a `shouldRunOptionalPassCallback` that returns false for that pass name. Note: passes that return `true` from `isRequired()` cannot be skipped this way -- flexclang prints a warning if the user tries. Use `PIC->getPassNameForClassName()` to translate class names to pipeline names for matching.
    - For each `ir-passes.load-plugin` entry: load the `.so` and call `registerPassBuilderCallbacks()` (same as `-fpass-plugin=`).
 8. Call `ExecuteCompilerInvocation()` -- standard clang execution.
 
@@ -221,7 +221,7 @@ Note: `-fpass-plugin=` is an upstream clang flag that works as-is. The YAML `loa
 | CLI Flag | Purpose |
 |----------|---------|
 | `--flex-config=<path>` | Load YAML config file |
-| `--flex-list-passes` | Dump all MIR and IR pass names in pipeline order |
+| `--flex-list-passes` | Dump all MIR and IR pass names in pipeline order (reflects target, optimization level, and feature flags of the compilation) |
 
 ### 4.3 Environment Variables
 
@@ -330,7 +330,9 @@ Use --flex-insert-after=<pass-name>:<plugin.so> to insert after any pass listed 
 
 ### 6.2 Pass Name Source
 
-MIR pass names come from `Pass::getPassName()`. These are the same strings accepted by LLVM's `-start-before`/`-stop-after` flags. IR pass names are the textual pipeline names from `PassRegistry.def` and `AMDGPUPassRegistry.def`.
+MIR pass names are the **pass argument strings** registered via `INITIALIZE_PASS` (typically the `DEBUG_TYPE` macro, e.g., `"si-form-memory-clauses"`). These are the same strings accepted by LLVM's `-start-before`/`-stop-after` flags and resolved via `PassRegistry::getPassInfo(StringRef)`. Note: this is distinct from `Pass::getPassName()`, which returns the human-readable description.
+
+IR pass names are the textual pipeline names from `PassRegistry.def` and `AMDGPUPassRegistry.def`. Passes that return `true` from `isRequired()` cannot be disabled by `shouldRunOptionalPassCallback`.
 
 ### 6.3 Critical Passes
 
@@ -695,7 +697,7 @@ examples/
 
 This section outlines the planned custom scheduler pass that will use measured latency data. Implementation details will be designed separately.
 
-### 8.1 Concept
+### 9.1 Concept
 
 A custom MIR pass plugin (`flex-scheduler.so`) that:
 1. Reads a per-target latency model file (YAML) with measured instruction latencies
@@ -703,7 +705,7 @@ A custom MIR pass plugin (`flex-scheduler.so`) that:
 3. Ships with default latency models for gfx942, gfx950 (to be measured and refined)
 4. Allows users to supply their own measurements (e.g., from rocprofv3)
 
-### 8.2 Latency Model Format (preliminary)
+### 9.2 Latency Model Format (preliminary)
 
 ```yaml
 # gfx942-latency.yaml
@@ -729,7 +731,7 @@ instruction-latencies:
   # ... etc
 ```
 
-### 8.3 Integration
+### 9.3 Integration
 
 ```yaml
 # flexclang.yaml
