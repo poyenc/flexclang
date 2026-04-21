@@ -1,0 +1,4 @@
+mir-passes:
+  - action: insert-after
+    target: machine-scheduler
+    plugin: ./mir-nop-inserter.so
