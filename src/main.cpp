@@ -18,17 +18,21 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
+#include "clang/Driver/Compilation.h"
+#include "clang/Driver/Driver.h"
+#include "clang/Frontend/TextDiagnosticPrinter.h"
+#include "llvm/Support/CrashRecoveryContext.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Process.h"
 
 using namespace clang;
 using namespace llvm;
 
-int main(int argc, const char **argv) {
-  InitLLVM X(argc, argv);
+static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
+  cl::ResetAllOptionOccurrences();
 
-  InitializeAllTargets();
-  InitializeAllTargetMCs();
-  InitializeAllAsmPrinters();
-  InitializeAllAsmParsers();
+  int cc1Argc = ArgV.size() - 1;
+  const char **cc1Argv = ArgV.data() + 1;
 
   auto PCHOps = std::make_shared<PCHContainerOperations>();
   PCHOps->registerWriter(std::make_unique<ObjectFilePCHContainerWriter>());
@@ -41,7 +45,7 @@ int main(int argc, const char **argv) {
 
   SmallVector<const char *, 256> clangArgs;
   flexclang::FlexConfig config =
-      flexclang::parseFlexArgs(clangArgs, argc, argv);
+      flexclang::parseFlexArgs(clangArgs, cc1Argc, cc1Argv);
 
   if (!config.configFile.empty()) {
     if (!flexclang::parseFlexYAML(config, config.configFile))
@@ -73,7 +77,7 @@ int main(int argc, const char **argv) {
   ArrayRef<const char *> Args(clangArgs);
   auto Invocation = std::make_shared<CompilerInvocation>();
   bool Success =
-      CompilerInvocation::CreateFromArgs(*Invocation, Args, Diags, argv[0]);
+      CompilerInvocation::CreateFromArgs(*Invocation, Args, Diags, ArgV[0]);
 
   auto Clang =
       std::make_unique<CompilerInstance>(std::move(Invocation), std::move(PCHOps));
@@ -168,4 +172,21 @@ int main(int argc, const char **argv) {
   }
 
   return Success ? 0 : 1;
+}
+
+int main(int argc, const char **argv) {
+  InitLLVM X(argc, argv);
+
+  InitializeAllTargets();
+  InitializeAllTargetMCs();
+  InitializeAllAsmPrinters();
+  InitializeAllAsmParsers();
+
+  if (argc >= 2 && StringRef(argv[1]) == "-cc1") {
+    SmallVector<const char *, 256> ArgV(argv, argv + argc);
+    return flexclang_cc1_main(ArgV);
+  }
+
+  errs() << "flexclang: driver mode not yet implemented. Use -cc1 for cc1 mode.\n";
+  return 1;
 }
