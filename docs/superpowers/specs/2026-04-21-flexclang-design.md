@@ -202,7 +202,8 @@ ir-passes:
     plugin: ./my-ir-pass.so          # vectorizer-start, vectorizer-end,
                                      # scalar-optimizer-late, cgscc-late
 
-  # Load a standard PassPlugin (.so with llvmGetPassPluginInfo)
+  # Load a standard PassPlugin (equivalent to -fpass-plugin=)
+  # Plugin controls its own insertion point via PassBuilder callbacks
   - action: load-plugin
     plugin: ./my-ir-pass.so
 
@@ -228,8 +229,8 @@ All YAML config entries have CLI equivalents:
 | `--flex-insert-after=<name>:<plugin.so>` | `mir-passes: [{action: insert-after, ...}]` |
 | `--flex-insert-at=<hook>:<plugin.so>` | `mir-passes: [{action: insert-at, ...}]` |
 | `--flex-disable-ir-pass=<name>` | `ir-passes: [{action: disable, target: <name>}]` |
-| `--flex-ir-plugin=<plugin.so>` | `ir-passes: [{action: load-plugin, plugin: <so>}]` |
-| `--flex-ir-plugin-at=<ep>:<plugin.so>` | `ir-passes: [{action: add, extension-point: <ep>, ...}]` |
+| `-fpass-plugin=<plugin.so>` | (upstream clang flag, works as-is -- plugin controls its own insertion point) |
+| `--flex-ir-plugin-at=<ep>:<plugin.so>` | `ir-passes: [{action: add, extension-point: <ep>, ...}]` (user controls insertion point) |
 | `--flex-list-passes` | Dump pipeline (MIR and IR pass names) |
 | `--flex-latency-model=<path>` | `latency-model: {file: <path>}` |
 
@@ -472,7 +473,7 @@ clang++ -shared -fPIC -o ir-inst-counter.so IRInstCounter.cpp \
 
 Usage (works with both flexclang and upstream clang):
 ```bash
-flexclang --flex-ir-plugin=./ir-inst-counter.so \
+flexclang -fpass-plugin=./ir-inst-counter.so \
   -x hip test_kernel.hip -o test_kernel.o --offload-arch=gfx942
 ```
 
@@ -656,7 +657,7 @@ else
 fi
 
 echo "=== Test 4: IR pass plugin ==="
-$FLEXCLANG --flex-ir-plugin=./ir-inst-counter.so \
+$FLEXCLANG -fpass-plugin=./ir-inst-counter.so \
   -x hip $KERNEL -S -o /tmp/ir-plugin.s --offload-arch=$ARCH -O2 \
   2>/tmp/ir-plugin-stderr.txt
 grep -q "\[IRInstCounter\]" /tmp/ir-plugin-stderr.txt
