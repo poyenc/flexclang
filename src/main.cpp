@@ -10,6 +10,10 @@
 #include "clang/Frontend/TextDiagnosticBuffer.h"
 #include "clang/FrontendTool/Utils.h"
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
+#include "llvm/ADT/Any.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Plugins/PassPlugin.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -87,6 +91,57 @@ int main(int argc, const char **argv) {
 
   DiagsBuffer->FlushDiagnostics(Clang->getDiagnostics());
   if (!Success) return 1;
+
+  // --flex-list-passes: use LLVM's -debug-pass=Structure
+  if (config.listPasses) {
+    const char *args[] = {"flexclang", "-debug-pass=Structure"};
+    cl::ParseCommandLineOptions(2, args, "flexclang pass listing\n");
+  }
+
+  // IR pass modifications via PassBuilderCallbacks
+  {
+    std::vector<std::string> irDisable;
+    std::vector<std::string> irPlugins;
+    for (const auto &r : config.irRules) {
+      if (r.action == flexclang::IRPassRule::Disable)
+        irDisable.push_back(r.target);
+      else if (r.action == flexclang::IRPassRule::LoadPlugin)
+        irPlugins.push_back(r.plugin);
+    }
+
+    if (!irDisable.empty() || !irPlugins.empty()) {
+      bool verbose = config.verbose;
+      Clang->getCodeGenOpts().PassBuilderCallbacks.push_back(
+          [irDisable, irPlugins, verbose](PassBuilder &PB) {
+            if (!irDisable.empty()) {
+              auto *PIC = PB.getPassInstrumentationCallbacks();
+              if (PIC) {
+                PIC->registerShouldRunOptionalPassCallback(
+                    [irDisable, verbose](StringRef Name, Any) {
+                      for (const auto &d : irDisable) {
+                        if (Name.contains_insensitive(d)) {
+                          if (verbose)
+                            errs() << "flexclang: skipping IR pass '"
+                                   << Name << "'\n";
+                          return false;
+                        }
+                      }
+                      return true;
+                    });
+              }
+            }
+            for (const auto &path : irPlugins) {
+              auto Plugin = PassPlugin::Load(path);
+              if (Plugin) {
+                Plugin->registerPassBuilderCallbacks(PB);
+              } else {
+                errs() << "flexclang: error: "
+                       << toString(Plugin.takeError()) << "\n";
+              }
+            }
+          });
+    }
+  }
 
   Success = ExecuteCompilerInvocation(Clang.get());
   remove_fatal_error_handler();
