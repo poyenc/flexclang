@@ -23,7 +23,9 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/Process.h"
+#include "llvm/TargetParser/Host.h"
 
 using namespace clang;
 using namespace llvm;
@@ -82,7 +84,10 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   auto Clang =
       std::make_unique<CompilerInstance>(std::move(Invocation), std::move(PCHOps));
 
-  auto VFS = vfs::getRealFileSystem();
+  auto VFS = [] {
+    auto BypassSandbox = llvm::sys::sandbox::scopedDisable();
+    return vfs::getRealFileSystem();
+  }();
   Clang->createVirtualFileSystem(std::move(VFS), DiagsBuffer);
   Clang->createDiagnostics();
 
@@ -174,6 +179,93 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   return Success ? 0 : 1;
 }
 
+/// Check if a Command's arguments contain -triple amdgcn*.
+static bool hasAMDGCNTriple(const llvm::opt::ArgStringList &Args) {
+  for (size_t i = 0; i + 1 < Args.size(); ++i) {
+    if (StringRef(Args[i]) == "-triple" &&
+        StringRef(Args[i + 1]).starts_with("amdgcn"))
+      return true;
+  }
+  return false;
+}
+
+static int flexclang_driver_main(int argc, const char **argv) {
+  // Strip --flex-* flags, keep driver args
+  SmallVector<const char *, 256> driverArgs;
+  driverArgs.push_back(argv[0]); // program name for Driver
+  flexclang::FlexConfig config =
+      flexclang::parseFlexArgs(driverArgs, argc, argv);
+
+  if (!config.configFile.empty()) {
+    if (!flexclang::parseFlexYAML(config, config.configFile))
+      return 1;
+  }
+
+  // Handle --flex-dry-run
+  if (config.dryRun && config.hasModifications()) {
+    for (const auto &r : config.mirRules) {
+      const char *acts[] = {"disable", "replace", "insert-after"};
+      errs() << "flexclang: [dry-run] MIR " << acts[r.action]
+             << " target='" << r.target << "'";
+      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
+      errs() << "\n";
+    }
+    for (const auto &r : config.irRules) {
+      const char *acts[] = {"disable", "load-plugin"};
+      errs() << "flexclang: [dry-run] IR " << acts[r.action]
+             << " target='" << r.target << "'";
+      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
+      errs() << "\n";
+    }
+    return 0;
+  }
+
+  // Resolve executable path
+  void *MainAddr = (void *)(intptr_t)flexclang_driver_main;
+  std::string ExePath =
+      llvm::sys::fs::getMainExecutable(argv[0], MainAddr);
+
+  // Create driver diagnostics
+  IntrusiveRefCntPtr<DiagnosticIDs> DiagID = DiagnosticIDs::create();
+  DiagnosticOptions DiagOpts;
+  auto *DiagPrinter = new TextDiagnosticPrinter(errs(), DiagOpts);
+  DiagnosticsEngine Diags(DiagID, DiagOpts, DiagPrinter);
+
+  // Create the Driver
+  clang::driver::Driver TheDriver(ExePath,
+                                   llvm::sys::getDefaultTargetTriple(),
+                                   Diags, "flexclang LLVM compiler");
+
+  // In-process cc1 execution
+  TheDriver.CC1Main = [](SmallVectorImpl<const char *> &ArgV) {
+    return flexclang_cc1_main(ArgV);
+  };
+  CrashRecoveryContext::Enable();
+
+  // Build compilation from driver args
+  std::unique_ptr<clang::driver::Compilation> C(
+      TheDriver.BuildCompilation(driverArgs));
+  if (!C)
+    return 1;
+
+  // Inject --flex-* flags into AMDGCN cc1 commands
+  if (!config.originalFlexArgs.empty()) {
+    for (auto &Job : C->getJobs()) {
+      if (!hasAMDGCNTriple(Job.getArguments()))
+        continue;
+      auto Args = Job.getArguments();
+      for (const auto &FlexArg : config.originalFlexArgs)
+        Args.push_back(C->getArgs().MakeArgString(FlexArg));
+      Job.replaceArguments(std::move(Args));
+    }
+  }
+
+  // Execute
+  SmallVector<std::pair<int, const clang::driver::Command *>, 4> FailingCommands;
+  int Res = TheDriver.ExecuteCompilation(*C, FailingCommands);
+  return Res;
+}
+
 int main(int argc, const char **argv) {
   InitLLVM X(argc, argv);
 
@@ -187,6 +279,5 @@ int main(int argc, const char **argv) {
     return flexclang_cc1_main(ArgV);
   }
 
-  errs() << "flexclang: driver mode not yet implemented. Use -cc1 for cc1 mode.\n";
-  return 1;
+  return flexclang_driver_main(argc, argv);
 }
