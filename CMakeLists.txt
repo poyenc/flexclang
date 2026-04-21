@@ -14,6 +14,7 @@ add_definitions(${LLVM_DEFINITIONS_LIST})
 add_executable(flexclang
   src/main.cpp
   src/FlexConfig.cpp
+  src/FlexPassNameRegistry.cpp
 )
 
 llvm_map_components_to_libnames(LLVM_LIBS
