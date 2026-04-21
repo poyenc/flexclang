@@ -33,4 +33,5 @@ target_link_libraries(flexclang PRIVATE
 )
 
 target_compile_features(flexclang PRIVATE cxx_std_17)
+set_target_properties(flexclang PROPERTIES ENABLE_EXPORTS ON)
 install(TARGETS flexclang DESTINATION bin)
