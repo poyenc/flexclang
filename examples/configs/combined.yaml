@@ -1,10 +1,10 @@
 ir-passes:
   - action: load-plugin
-    plugin: ./ir-inst-counter.so
+    plugin: examples/ir-pass-counter/build/ir-inst-counter.so
 
 mir-passes:
   - action: disable
     target: si-form-memory-clauses
   - action: insert-after
     target: machine-scheduler
-    plugin: ./mir-nop-inserter.so
+    plugin: examples/mir-pass-nop-inserter/build/mir-nop-inserter.so
