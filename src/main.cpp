@@ -1,5 +1,6 @@
 // src/main.cpp
 #include "FlexConfig.h"
+#include "FlexPassConfigCallback.h"
 #include "clang/Basic/DiagnosticFrontend.h"
 #include "clang/Basic/DiagnosticIDs.h"
 #include "clang/Basic/DiagnosticOptions.h"
@@ -58,6 +59,10 @@ int main(int argc, const char **argv) {
       errs() << "\n";
     }
     return 0;
+  }
+
+  if (config.hasModifications()) {
+    flexclang::registerFlexPassConfigCallback(config);
   }
 
   ArrayRef<const char *> Args(clangArgs);
