@@ -10,6 +10,7 @@
 #include "clang/Frontend/TextDiagnosticBuffer.h"
 #include "clang/FrontendTool/Utils.h"
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
+#include <set>
 #include "llvm/ADT/Any.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
@@ -99,8 +100,9 @@ int main(int argc, const char **argv) {
   }
 
   // IR pass modifications via PassBuilderCallbacks
+  std::vector<std::string> irDisable;
+  auto irMatched = std::make_shared<std::set<std::string>>();
   {
-    std::vector<std::string> irDisable;
     std::vector<std::string> irPlugins;
     for (const auto &r : config.irRules) {
       if (r.action == flexclang::IRPassRule::Disable)
@@ -111,15 +113,17 @@ int main(int argc, const char **argv) {
 
     if (!irDisable.empty() || !irPlugins.empty()) {
       bool verbose = config.verbose;
+      auto irDisableShared = std::make_shared<std::vector<std::string>>(irDisable);
       Clang->getCodeGenOpts().PassBuilderCallbacks.push_back(
-          [irDisable, irPlugins, verbose](PassBuilder &PB) {
-            if (!irDisable.empty()) {
+          [irDisableShared, irPlugins, verbose, irMatched](PassBuilder &PB) {
+            if (!irDisableShared->empty()) {
               auto *PIC = PB.getPassInstrumentationCallbacks();
               if (PIC) {
                 PIC->registerShouldRunOptionalPassCallback(
-                    [irDisable, verbose](StringRef Name, Any) {
-                      for (const auto &d : irDisable) {
-                        if (Name.contains_insensitive(d)) {
+                    [irDisableShared, verbose, irMatched](StringRef Name, Any) {
+                      for (const auto &d : *irDisableShared) {
+                        if (Name.equals_insensitive(d)) {
+                          irMatched->insert(d);
                           if (verbose)
                             errs() << "flexclang: skipping IR pass '"
                                    << Name << "'\n";
@@ -145,5 +149,15 @@ int main(int argc, const char **argv) {
 
   Success = ExecuteCompilerInvocation(Clang.get());
   remove_fatal_error_handler();
+
+  // Warn about IR passes that were requested for disabling but never matched.
+  // This typically means the pass is required (isRequired() == true) and cannot
+  // be skipped by shouldRunOptionalPassCallback, or the name was misspelled.
+  for (const auto &d : irDisable) {
+    if (!irMatched->count(d))
+      errs() << "flexclang: warning: IR pass '" << d
+             << "' was not disabled (pass may be required or name misspelled)\n";
+  }
+
   return Success ? 0 : 1;
 }

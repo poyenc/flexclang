@@ -1,6 +1,7 @@
 #include "FlexPassConfigCallback.h"
 #include "FlexPassLoader.h"
 #include "FlexPassNameRegistry.h"
+#include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Target/RegisterTargetPassConfigCallback.h"
@@ -50,6 +51,10 @@ void registerFlexPassConfigCallback(const FlexConfig &config) {
             Pass *NewPass = loadMIRPassPlugin(rule.plugin, rule.config);
             if (!NewPass) break;
             PassConfig->insertPass(ID, NewPass);
+            if (config.verifyPlugins)
+              PassConfig->insertPass(NewPass->getPassID(),
+                                     createMachineVerifierPass(
+                                         "After flex plugin: " + rule.plugin));
             if (config.verbose)
               errs() << "flexclang: inserted after '" << rule.target
                      << "' from " << rule.plugin << "\n";
