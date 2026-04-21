@@ -730,11 +730,12 @@ A minimal kernel that explicitly uses MFMA builtins to guarantee MFMA instructio
 #include <hip/hip_runtime.h>
 
 using half4 = __attribute__((ext_vector_type(4))) _Float16;
-using float4 = __attribute__((ext_vector_type(4))) float;
 using float16 = __attribute__((ext_vector_type(16))) float;
 
 // Minimal kernel that guarantees MFMA instructions in the output.
-// Exercises: global_load_dwordx4, ds_read, v_mfma_f32_16x16x16f16,
+// Uses v_mfma_f32_32x32x8f16: 32x32 output tile with K=8,
+// each thread in wave64 holds 1024/64 = 16 floats (float16).
+// Exercises: global_load_dwordx4, ds_read, v_mfma_f32_32x32x8f16,
 //            v_mov, s_waitcnt
 __global__ void mfma_gemm_tile(const half4* __restrict__ A,
                                const half4* __restrict__ B,
@@ -746,7 +747,7 @@ __global__ void mfma_gemm_tile(const half4* __restrict__ A,
   __shared__ half4 tileA[64];
   __shared__ half4 tileB[64];
 
-  // Accumulator (16 floats for 16x16 output tile)
+  // Accumulator (16 floats per thread for 32x32 output tile)
   float16 acc = {0};
 
   for (int k = 0; k < K_tiles; ++k) {
@@ -755,12 +756,12 @@ __global__ void mfma_gemm_tile(const half4* __restrict__ A,
     tileB[tx] = B[blockIdx.x * K_tiles * 64 + k * 64 + tx];
     __syncthreads();
 
-    // MFMA: F32 += F16 * F16 (16x16x16)
-    // Each thread contributes to a 16x16 output tile
+    // MFMA: F32 += F16 * F16 (32x32x8)
+    // Each thread contributes to a 32x32 output tile
     for (int i = 0; i < 4; ++i) {
       half4 a = tileA[i * 16 + tx % 16];
       half4 b = tileB[i * 16 + tx / 16];
-      acc = __builtin_amdgcn_mfma_f32_16x16x16f16(a, b, acc, 0, 0, 0);
+      acc = __builtin_amdgcn_mfma_f32_32x32x8f16(a, b, acc, 0, 0, 0);
     }
     __syncthreads();
   }
