@@ -3,7 +3,7 @@
 # Validates flexclang pass plugin system in both cc1 and driver modes
 
 set -e
-FLEXCLANG=${FLEXCLANG:-./build/flexclang}
+FLEXCLANG=${FLEXCLANG:-./build/flexclang++}
 ARCH=${ARCH:-gfx942}
 KERNEL=examples/test_kernel.hip
 
@@ -40,7 +40,7 @@ echo "PASS: --flex-list-passes shows [ir.N]/[mir.N] format, IR before MIR"
 
 echo "=== cc1 Test 3a: Disable non-substitutable pass ==="
 # si-form-memory-clauses is added via insertPass() -- disablePass() has no effect.
-# flexclang detects this at runtime and warns after compilation.
+# flexclang++ detects this at runtime and warns after compilation.
 $FLEXCLANG -cc1 --flex-disable-pass=si-form-memory-clauses \
   $CC1_FLAGS -S -o /tmp/disabled-nosub.s $KERNEL \
   2>/tmp/disabled-nosub-stderr.txt
@@ -54,7 +54,7 @@ echo "=== cc1 Test 3b: Disable substitutable pass ==="
 $FLEXCLANG -cc1 --flex-verbose --flex-disable-pass=machine-scheduler \
   $CC1_FLAGS -S -o /tmp/disabled-sub.s $KERNEL \
   2>/tmp/disabled-sub-stderr.txt
-grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/disabled-sub-stderr.txt
+grep -q "flexclang++: requesting disable of MIR pass 'machine-scheduler'" /tmp/disabled-sub-stderr.txt
 ! grep -q "was not disabled" /tmp/disabled-sub-stderr.txt
 if diff -q /tmp/baseline.s /tmp/disabled-sub.s > /dev/null 2>&1; then
   echo "FAIL: Disabling machine-scheduler should change assembly"
@@ -64,7 +64,7 @@ echo "PASS: Substitutable pass disabled, assembly changed"
 
 echo "=== cc1 Test 3c: Replace non-substitutable pass ==="
 # si-form-memory-clauses is added via insertPass() -- substitutePass() has no effect.
-# flexclang detects this at runtime and warns after compilation.
+# flexclang++ detects this at runtime and warns after compilation.
 $FLEXCLANG -cc1 --flex-replace-pass=si-form-memory-clauses:$MIR_PLUGIN \
   $CC1_FLAGS -S -o /tmp/replaced-nosub.s $KERNEL \
   2>/tmp/replaced-nosub-stderr.txt
@@ -124,7 +124,7 @@ $FLEXCLANG -cc1 --flex-verbose \
   --flex-replace-pass=machine-scheduler:$MIR_PLUGIN \
   $CC1_FLAGS -S -o /tmp/replaced.s $KERNEL \
   2>/tmp/replace-stderr.txt
-grep -q "flexclang: requesting replace of 'machine-scheduler'" /tmp/replace-stderr.txt
+grep -q "flexclang++: requesting replace of 'machine-scheduler'" /tmp/replace-stderr.txt
 grep -q "\[MIRNopInserter\]" /tmp/replace-stderr.txt
 REPLACE_NOPS=$(grep -c "s_nop" /tmp/replaced.s || true)
 if [ "$REPLACE_NOPS" -gt "$BASELINE_NOPS" ]; then
@@ -151,7 +151,7 @@ $FLEXCLANG -cc1 --flex-verbose \
   $CC1_FLAGS -S -o /tmp/cli-override.s $KERNEL \
   2>/tmp/cli-override-stderr.txt
 # CLI disable should take effect
-grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/cli-override-stderr.txt
+grep -q "flexclang++: requesting disable of MIR pass 'machine-scheduler'" /tmp/cli-override-stderr.txt
 # YAML insert-after for same target should be skipped (CLI wins)
 if grep -q "\[MIRNopInserter\]" /tmp/cli-override-stderr.txt; then
   echo "FAIL: YAML rule should have been overridden by CLI for same target"
@@ -163,7 +163,7 @@ echo "=== cc1 Test 10: --flex-disable-ir-pass ==="
 $FLEXCLANG -cc1 --flex-verbose --flex-disable-ir-pass=instcombine \
   $CC1_FLAGS -S -o /tmp/ir-disabled.s $KERNEL \
   2>/tmp/ir-disabled-stderr.txt
-grep -q "flexclang: skipping IR pass" /tmp/ir-disabled-stderr.txt
+grep -q "flexclang++: skipping IR pass" /tmp/ir-disabled-stderr.txt
 if diff -q /tmp/baseline.s /tmp/ir-disabled.s > /dev/null 2>&1; then
   echo "WARNING: disabling instcombine produced identical output (may be expected at -O2)"
 else
@@ -174,7 +174,7 @@ echo "=== cc1 Test 11a: Unknown IR pass name ==="
 $FLEXCLANG -cc1 --flex-disable-ir-pass=nonexistent-pass-name \
   $CC1_FLAGS -S -o /tmp/ir-nomatch.s $KERNEL \
   2>/tmp/ir-nomatch-stderr.txt
-grep -q "flexclang: error: unknown IR pass 'nonexistent-pass-name'" /tmp/ir-nomatch-stderr.txt
+grep -q "flexclang++: error: unknown IR pass 'nonexistent-pass-name'" /tmp/ir-nomatch-stderr.txt
 echo "PASS: Unknown IR pass name produces error"
 
 echo "=== cc1 Test 11b: Required IR pass ==="
@@ -211,7 +211,7 @@ FLEXCLANG_CONFIG=examples/configs/combined.yaml \
   $CC1_FLAGS -S -o /tmp/config-override.s $KERNEL \
   2>/tmp/config-override-stderr.txt
 # --flex-config's rule should apply
-grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/config-override-stderr.txt
+grep -q "flexclang++: requesting disable of MIR pass 'machine-scheduler'" /tmp/config-override-stderr.txt
 # FLEXCLANG_CONFIG's IR plugin should NOT have loaded
 if grep -q "\[IRInstCounter\]" /tmp/config-override-stderr.txt; then
   echo "FAIL: FLEXCLANG_CONFIG should be overridden by --flex-config"
@@ -223,7 +223,7 @@ echo "=== cc1 Test 15: Unknown MIR pass name ==="
 $FLEXCLANG -cc1 --flex-disable-pass=nonexistent-mir-pass \
   $CC1_FLAGS -S -o /tmp/unknown-mir.s $KERNEL \
   2>/tmp/unknown-mir-stderr.txt
-grep -q "flexclang: error: unknown MIR pass 'nonexistent-mir-pass'.*--flex-list-passes" /tmp/unknown-mir-stderr.txt
+grep -q "flexclang++: error: unknown MIR pass 'nonexistent-mir-pass'.*--flex-list-passes" /tmp/unknown-mir-stderr.txt
 echo "PASS: Unknown MIR pass name produces error"
 
 echo "=== cc1 Test 16: --flex-verify-plugins ==="
@@ -239,14 +239,14 @@ echo ""
 echo "========================================="
 echo "  Driver Mode Tests"
 echo "========================================="
-echo "(Require flexclang co-installed with clang)"
+echo "(Require flexclang++ co-installed with clang++)"
 
-# Driver mode needs flexclang in the same bin/ as clang
+# Driver mode needs flexclang++ in the same bin/ as clang++
 FLEXCLANG_REAL=$(readlink -f $FLEXCLANG)
 FLEXCLANG_DIR=$(dirname "$FLEXCLANG_REAL")
 DRIVER_KERNEL=examples/test_kernel_driver.hip
-if [ ! -f "$FLEXCLANG_DIR/clang" ] && [ ! -L "$FLEXCLANG_DIR/clang" ]; then
-  echo "SKIP: Driver mode tests require flexclang in same dir as clang"
+if [ ! -f "$FLEXCLANG_DIR/clang++" ] && [ ! -L "$FLEXCLANG_DIR/clang++" ]; then
+  echo "SKIP: Driver mode tests require flexclang++ in same dir as clang++"
   echo ""
   echo "cc1 tests passed!"
   exit 0
@@ -270,7 +270,7 @@ echo "=== Driver Test 3: Flex flags change assembly ==="
 $FLEXCLANG --flex-verbose --flex-disable-pass=machine-scheduler \
   $DRIVER_HIP_FLAGS -S -o /tmp/driver-disabled.s $DRIVER_KERNEL \
   2>/tmp/driver-stderr.txt
-grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/driver-stderr.txt
+grep -q "flexclang++: requesting disable of MIR pass 'machine-scheduler'" /tmp/driver-stderr.txt
 if diff -q /tmp/driver-baseline.s /tmp/driver-disabled.s > /dev/null 2>&1; then
   echo "WARNING: disabling machine-scheduler produced identical driver output"
 else
@@ -320,11 +320,22 @@ $FLEXCLANG --flex-verbose --flex-disable-pass=machine-scheduler \
   /tmp/driver-host-test.c -c -o /tmp/driver-host-flex.o \
   2>/tmp/driver-host-stderr.txt
 # No flex messages should appear for host-only compilation (no AMDGCN jobs)
-if grep -q "flexclang: requesting disable" /tmp/driver-host-stderr.txt; then
+if grep -q "flexclang++: requesting disable" /tmp/driver-host-stderr.txt; then
   echo "FAIL: Flex flags should not affect host-only compilation"
   exit 1
 fi
 echo "PASS: Host code unaffected by flex flags"
+
+echo "--- Test: co-installation enforcement ---"
+TMPDIR=$(mktemp -d)
+cp "$FLEXCLANG" "$TMPDIR/flexclang++"
+if "$TMPDIR/flexclang++" --version 2>&1 | grep -q "co-installed clang++ not found"; then
+    echo "PASS: co-installation check works"
+else
+    echo "FAIL: co-installation check missing"
+    FAIL=$((FAIL + 1))
+fi
+rm -rf "$TMPDIR"
 
 echo ""
 echo "All tests passed!"
