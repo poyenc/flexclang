@@ -26,6 +26,7 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/Process.h"
 #include "llvm/TargetParser/Host.h"
@@ -238,12 +239,19 @@ static bool hasAMDGCNTriple(const llvm::opt::ArgStringList &Args) {
 }
 
 static int flexclang_driver_main(int argc, const char **argv) {
+  // Resolve co-installed clang++ for Driver identity.
+  // The Driver uses the executable path for CUID hashes, mode detection,
+  // and tool resolution. Using clang++ makes flexclang++ a transparent
+  // drop-in that produces byte-identical output.
+  void *MainAddr = (void *)(intptr_t)flexclang_driver_main;
+  std::string FlexPath =
+      llvm::sys::fs::getMainExecutable(argv[0], MainAddr);
+  std::string ClangPath =
+      (llvm::sys::path::parent_path(FlexPath) + "/clang++").str();
+
   // Strip --flex-* flags, keep driver args
   SmallVector<const char *, 256> driverArgs;
-  driverArgs.push_back(argv[0]); // program name for Driver
-  // flexclang is a C++ compiler (replaces clang++). The Driver infers
-  // C/C++ mode from the binary name, so set it explicitly.
-  driverArgs.push_back("--driver-mode=g++");
+  driverArgs.push_back(ClangPath.c_str()); // use clang++ identity for Driver
   flexclang::FlexConfig config =
       flexclang::parseFlexArgs(driverArgs, argc, argv);
 
@@ -265,10 +273,15 @@ static int flexclang_driver_main(int argc, const char **argv) {
     return 0;
   }
 
-  // Resolve executable path
-  void *MainAddr = (void *)(intptr_t)flexclang_driver_main;
-  std::string ExePath =
-      llvm::sys::fs::getMainExecutable(argv[0], MainAddr);
+  // Enforce co-installation requirement
+  if (!llvm::sys::fs::exists(ClangPath)) {
+    errs() << config.programName
+           << ": error: co-installed clang++ not found at " << ClangPath << "\n"
+           << config.programName
+           << " must be installed in the same bin/ directory as clang++\n";
+    return 1;
+  }
+  std::string ExePath = ClangPath;
 
   // Create driver diagnostics
   IntrusiveRefCntPtr<DiagnosticIDs> DiagID = DiagnosticIDs::create();
