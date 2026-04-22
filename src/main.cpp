@@ -246,10 +246,11 @@ static bool hasAMDGCNTriple(const llvm::opt::ArgStringList &Args) {
 }
 
 static int flexclang_driver_main(int argc, const char **argv) {
-  // Resolve co-installed clang++ for Driver identity.
-  // The Driver uses the executable path for CUID hashes, mode detection,
-  // and tool resolution. Using clang++ makes flexclang++ a transparent
-  // drop-in that produces byte-identical output.
+  // Resolve co-installed clang++ path for Driver identity.
+  // The Driver uses ClangExecutable for tool resolution and resource dirs.
+  // Using clang++ ensures correct driver mode and tool chain setup.
+  // Note: __hip_cuid_ hashes will still differ (they depend on config file
+  // name which is derived from ClangExecutable), but this is non-functional.
   void *MainAddr = (void *)(intptr_t)flexclang_driver_main;
   std::string FlexPath =
       llvm::sys::fs::getMainExecutable(argv[0], MainAddr);
