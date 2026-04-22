@@ -14,7 +14,8 @@ namespace flexclang {
 /// Falls back to flexclangCreatePass(). Returns nullptr on failure.
 llvm::Pass *loadMIRPassPlugin(llvm::StringRef soPath,
                                llvm::StringRef configPath = "",
-                               bool verbose = false);
+                               bool verbose = false,
+                               llvm::StringRef programName = "flexclang++");
 
 } // namespace flexclang
 

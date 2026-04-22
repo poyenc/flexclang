@@ -8,10 +8,10 @@ using namespace llvm;
 
 namespace flexclang {
 
-const void *resolvePassID(StringRef passArg) {
+const void *resolvePassID(StringRef passArg, StringRef programName) {
   const PassInfo *PI = PassRegistry::getPassRegistry()->getPassInfo(passArg);
   if (!PI) {
-    errs() << "flexclang: error: unknown MIR pass '" << passArg
+    errs() << programName << ": error: unknown MIR pass '" << passArg
            << "' (use --flex-list-passes to see available passes)\n";
     return nullptr;
   }

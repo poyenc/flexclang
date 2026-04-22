@@ -8,12 +8,13 @@ using namespace llvm;
 
 namespace flexclang {
 
-Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath, bool verbose) {
+Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath, bool verbose,
+                        StringRef programName) {
   std::string errMsg;
   auto Lib =
       sys::DynamicLibrary::getPermanentLibrary(soPath.str().c_str(), &errMsg);
   if (!Lib.isValid()) {
-    errs() << "flexclang: error: cannot load '" << soPath
+    errs() << programName << ": error: cannot load '" << soPath
            << "': " << errMsg << "\n";
     return nullptr;
   }
@@ -26,18 +27,18 @@ Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath, bool verbose) {
     if (CreateWithConfig) {
       auto Buf = MemoryBuffer::getFile(configPath);
       if (!Buf) {
-        errs() << "flexclang: error: cannot read plugin config '"
+        errs() << programName << ": error: cannot read plugin config '"
                << configPath << "': " << Buf.getError().message() << "\n";
         return nullptr;
       }
       Pass *P = CreateWithConfig((*Buf)->getBuffer().str().c_str());
       if (!P) {
-        errs() << "flexclang: error: flexclangCreatePassWithConfig returned null\n";
+        errs() << programName << ": error: flexclangCreatePassWithConfig returned null\n";
         return nullptr;
       }
       return P;
     }
-    errs() << "flexclang: warning: config specified but plugin '"
+    errs() << programName << ": warning: config specified but plugin '"
            << soPath << "' does not export flexclangCreatePassWithConfig\n";
   }
 
@@ -46,14 +47,14 @@ Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath, bool verbose) {
   auto *CreatePass = reinterpret_cast<CreatePassFn>(
       Lib.getAddressOfSymbol("flexclangCreatePass"));
   if (!CreatePass) {
-    errs() << "flexclang: error: '" << soPath
+    errs() << programName << ": error: '" << soPath
            << "' exports neither flexclangCreatePass nor flexclangCreatePassWithConfig\n";
     return nullptr;
   }
 
   Pass *P = CreatePass();
   if (!P) {
-    errs() << "flexclang: error: flexclangCreatePass returned null in '"
+    errs() << programName << ": error: flexclangCreatePass returned null in '"
            << soPath << "'\n";
     return nullptr;
   }
@@ -64,7 +65,7 @@ Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath, bool verbose) {
     auto *GetName = reinterpret_cast<PassNameFn>(
         Lib.getAddressOfSymbol("flexclangPassName"));
     if (GetName)
-      errs() << "flexclang: loaded MIR plugin '" << GetName() << "'\n";
+      errs() << programName << ": loaded MIR plugin '" << GetName() << "'\n";
   }
 
   return P;
