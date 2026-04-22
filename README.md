@@ -1,6 +1,6 @@
 # flexclang
 
-A drop-in replacement for clang that lets AMDGPU HIP kernel developers disable, replace, and insert LLVM MIR and IR optimization passes via CLI flags and YAML configuration. Links against installed LLVM/Clang libraries without forking or modifying LLVM source code.
+A drop-in replacement for clang++ that lets AMDGPU HIP kernel developers disable, replace, and insert LLVM MIR and IR optimization passes via CLI flags and YAML configuration. Links against installed LLVM/Clang libraries without forking or modifying LLVM source code.
 
 ## Motivation
 
@@ -12,11 +12,11 @@ AMDGPU HIP kernel developers face several pain points with upstream LLVM/Clang:
 - **No per-pass enable/disable for Machine IR passes.** The only controls are `-start-before`/`-stop-after`.
 - **Long upstream lead time.** Patches require review by the compiler team; some are rejected on policy grounds.
 
-flexclang addresses these by giving developers direct control over the compiler pipeline without waiting for upstream changes.
+flexclang++ addresses these by giving developers direct control over the compiler pipeline without waiting for upstream changes.
 
 ## How It Works
 
-flexclang mirrors clang's compilation flow but intercepts the pass pipeline at two levels:
+flexclang++ mirrors clang++'s compilation flow but intercepts the pass pipeline at two levels:
 
 - **MIR passes:** Uses LLVM's `RegisterTargetPassConfigCallback` to receive the `TargetPassConfig` after `createPassConfig()` but before passes execute. Calls `disablePass()`, `substitutePass()`, and `insertPass()` based on configuration.
 - **IR passes:** Uses `shouldRunOptionalPassCallback` via `PassInstrumentationCallbacks` to skip IR optimization passes by name.
@@ -24,14 +24,14 @@ flexclang mirrors clang's compilation flow but intercepts the pass pipeline at t
 Both `GCNTargetMachine` and `GCNPassConfig` are `final` in LLVM and cannot be subclassed. The callback-based approach works around this constraint.
 
 ```
-flexclang [args]
+flexclang++ [args]
     |
     +-- argv[1] == "-cc1" --> cc1 mode (direct compilation)
     |
     +-- otherwise ---------> driver mode (orchestrates host + device)
 ```
 
-Without any `--flex-*` flags, flexclang produces bit-identical output to upstream clang.
+Without any `--flex-*` flags, flexclang++ produces bit-identical output to upstream clang++.
 
 ## Requirements
 
@@ -42,7 +42,7 @@ Without any `--flex-*` flags, flexclang produces bit-identical output to upstrea
 ## Building
 
 ```bash
-# Build flexclang
+# Build flexclang++
 cmake -B build -DCMAKE_PREFIX_PATH=/path/to/llvm/build
 cmake --build build -j$(nproc)
 
@@ -64,10 +64,13 @@ cmake --build examples/mir-pass-nop-inserter/build
 
 ## Installation
 
-flexclang must be installed in the same `bin/` directory as the clang it links against (the driver resolves resource directories and tools relative to its own path):
+**Important:** flexclang++ must be co-installed in the same `bin/` directory as
+the clang++ it links against. It will error on startup if clang++ is not found.
+
+The driver resolves resource directories and tools relative to its own path:
 
 ```bash
-cp build/flexclang /opt/rocm/llvm/bin/
+cp build/flexclang++ /opt/rocm/llvm/bin/
 ```
 
 ## Usage
@@ -75,15 +78,15 @@ cp build/flexclang /opt/rocm/llvm/bin/
 ### Driver Mode (primary)
 
 ```bash
-# Drop-in replacement for clang
-flexclang -x hip kernel.hip --offload-arch=gfx942 -O2 -o kernel.o
+# Drop-in replacement for clang++
+flexclang++ -x hip kernel.hip --offload-arch=gfx942 -O2 -o kernel.o
 
 # With flex flags
-flexclang --flex-disable-pass=machine-scheduler \
+flexclang++ --flex-disable-pass=machine-scheduler \
   -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o kernel.s
 
 # CMake integration
-cmake -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/flexclang \
+cmake -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/flexclang++ \
       -DCMAKE_HIP_ARCHITECTURES=gfx942 ..
 ```
 
@@ -92,7 +95,7 @@ Flex flags are injected only into AMDGCN device cc1 jobs. Host compilation is un
 ### cc1 Mode (advanced)
 
 ```bash
-flexclang -cc1 -x hip -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
+flexclang++ -cc1 -x hip -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
   --flex-disable-pass=machine-scheduler -O2 -S -o kernel.s kernel.hip
 ```
 
@@ -100,13 +103,13 @@ flexclang -cc1 -x hip -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
 
 ```bash
 # 1. Discover passes
-flexclang --flex-list-passes -x hip /dev/null --offload-arch=gfx942 -O2
+flexclang++ --flex-list-passes -x hip /dev/null --offload-arch=gfx942 -O2
 
 # 2. Compile baseline
-flexclang -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o baseline.s
+flexclang++ -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o baseline.s
 
 # 3. Modify pipeline
-flexclang --flex-disable-pass=machine-scheduler \
+flexclang++ --flex-disable-pass=machine-scheduler \
   -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o modified.s
 
 # 4. Compare
@@ -182,7 +185,7 @@ CLI flags take precedence over YAML when both target the same pass.
 ## Pass Discovery
 
 ```bash
-flexclang --flex-list-passes -x hip /dev/null --offload-arch=gfx942 -O2
+flexclang++ --flex-list-passes -x hip /dev/null --offload-arch=gfx942 -O2
 ```
 
 Output:
@@ -252,7 +255,7 @@ clang++ -shared -fPIC -fno-rtti -o my-pass.so my-pass.cpp \
 
 ### IR Pass Plugin
 
-Uses the standard upstream `llvmGetPassPluginInfo()` API, compatible with both flexclang and `clang -fpass-plugin=`:
+Uses the standard upstream `llvmGetPassPluginInfo()` API, compatible with both flexclang++ and `clang -fpass-plugin=`:
 
 ```cpp
 #include "llvm/Passes/PassPlugin.h"
@@ -283,26 +286,26 @@ extern "C" ::llvm::PassPluginLibraryInfo llvmGetPassPluginInfo() {
 
 - Build with `-fno-rtti` (matching LLVM)
 - Use `$(llvm-config --cxxflags)` to inherit correct flags
-- Plugin LLVM version must match the LLVM flexclang links against
+- Plugin LLVM version must match the LLVM flexclang++ links against
 - MIR plugins that use `AMDGPU::` opcodes need the AMDGPU target include path
 
 ## Diagnostics
 
-flexclang provides specific error messages for common issues:
+flexclang++ provides specific error messages for common issues:
 
 ```
 # Unknown pass name
-flexclang: error: unknown MIR pass 'bogus' (use --flex-list-passes to see available passes)
-flexclang: error: unknown IR pass 'bogus' (use --flex-list-passes to see available passes)
+flexclang++: error: unknown MIR pass 'bogus' (use --flex-list-passes to see available passes)
+flexclang++: error: unknown IR pass 'bogus' (use --flex-list-passes to see available passes)
 
 # Required IR pass (cannot be disabled)
-flexclang: warning: IR pass 'verify' is required and cannot be disabled
+flexclang++: warning: IR pass 'verify' is required and cannot be disabled
 
 # Critical MIR pass (dangerous to disable)
-flexclang: warning: disabling 'si-insert-waitcnts' may cause incorrect code generation
+flexclang++: warning: disabling 'si-insert-waitcnts' may cause incorrect code generation
 
 # Non-substitutable MIR pass (added via insertPass(), not addPass())
-flexclang: warning: MIR pass 'si-form-memory-clauses' was not disabled
+flexclang++: warning: MIR pass 'si-form-memory-clauses' was not disabled
 (pass may be added via insertPass() and cannot be disabled via disablePass())
 ```
 
@@ -310,16 +313,16 @@ flexclang: warning: MIR pass 'si-form-memory-clauses' was not disabled
 
 ```bash
 # 1. Verify the pass runs
-flexclang --flex-verbose --flex-insert-after=machine-scheduler:./my-pass.so ...
+flexclang++ --flex-verbose --flex-insert-after=machine-scheduler:./my-pass.so ...
 
 # 2. Dump MIR before/after
-flexclang -mllvm -print-before=my-pass -mllvm -print-after=my-pass ...
+flexclang++ -mllvm -print-before=my-pass -mllvm -print-after=my-pass ...
 
 # 3. Run verifier after plugin
-flexclang --flex-verify-plugins --flex-insert-after=machine-scheduler:./my-pass.so ...
+flexclang++ --flex-verify-plugins --flex-insert-after=machine-scheduler:./my-pass.so ...
 
 # 4. MIR round-trip (isolate your pass)
-flexclang -mllvm -stop-before=my-pass -x hip kernel.hip -o pre.mir ...
+flexclang++ -mllvm -stop-before=my-pass -x hip kernel.hip -o pre.mir ...
 llc -run-pass=my-pass -march=amdgcn -mcpu=gfx942 pre.mir -o post.mir
 diff pre.mir post.mir
 ```
@@ -328,10 +331,66 @@ diff pre.mir post.mir
 
 ```bash
 # Run the test suite (from repo root)
-FLEXCLANG=./build/flexclang ./examples/validate.sh
+FLEXCLANG=./build/flexclang++ ./examples/validate.sh
 ```
 
 The test suite covers 17 cc1 tests and 7 driver-mode tests including pass disable/replace/insert, plugin loading, YAML config, dry-run, CLI precedence, and diagnostic messages.
+
+## Drop-in Verification Test
+
+To verify flexclang++ is a transparent drop-in replacement for stock clang++, build
+a real HIP project with both compilers and compare the device object files.
+
+### Prerequisites
+
+- Docker with a ROCm PyTorch image (e.g., `rocm/pytorch:rocm7.2.2_ubuntu22.04_py3.10_pytorch_release_2.10.0`)
+- Composable Kernel source code
+- `rocm-llvm-dev` and `libzstd-dev` packages installed in the container
+
+### Steps
+
+1. **Build flexclang++ inside a ROCm container** and install to `/opt/rocm/llvm/bin/`:
+   ```bash
+   mkdir build && cd build
+   cmake /path/to/flexclang -DCMAKE_PREFIX_PATH=/opt/rocm/llvm -G Ninja
+   ninja
+   cp flexclang++ /opt/rocm/llvm/bin/
+   ```
+
+2. **Build the target with stock clang++** (baseline):
+   ```bash
+   cd /path/to/ck-stock-build
+   bash /path/to/composablekernel/script/cmake-ck-dev.sh /path/to/composablekernel gfx942 \
+       -DFMHA_FWD_ENABLE_APIS="fwd" -DBUILD_TESTING=OFF \
+       -B /path/to/ck-stock-build -G Ninja
+   ninja tile_example_fmha_fwd
+   ```
+
+3. **Build the same target with flexclang++**:
+   ```bash
+   cd /path/to/ck-flex-build
+   bash /path/to/composablekernel/script/cmake-ck-dev.sh /path/to/composablekernel gfx942 \
+       -DFMHA_FWD_ENABLE_APIS="fwd" -DBUILD_TESTING=OFF \
+       -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/flexclang++ \
+       -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/flexclang++ \
+       -B /path/to/ck-flex-build -G Ninja
+   ninja tile_example_fmha_fwd
+   ```
+
+4. **Compare device object files** — verify differences are limited to `__hip_cuid_` and `__hip_gpubin_handle_` (CUID-derived symbols that differ due to executable path):
+   ```bash
+   SDIR=ck-stock-build/example/ck_tile/01_fmha/CMakeFiles/tile_fmha_fwd_instances.dir
+   FDIR=ck-flex-build/example/ck_tile/01_fmha/CMakeFiles/tile_fmha_fwd_instances.dir
+   for sf in $SDIR/*.o; do
+       fname=$(basename "$sf")
+       diff <(strings -n20 "$sf" | grep -v "__hip_cuid_\|__hip_gpubin_handle_" | sort) \
+            <(strings -n20 "$FDIR/$fname" | grep -v "__hip_cuid_\|__hip_gpubin_handle_" | sort) \
+       || echo "REAL DIFF: $fname"
+   done
+   ```
+
+   All `.o` files should show zero differences after filtering CUID symbols. The actual
+   device codegen (IR, assembly, GPU ISA) is byte-identical.
 
 ## Project Structure
 
@@ -357,7 +416,7 @@ docs/
 ## Scope
 
 ### Phase 1 (implemented)
-- Drop-in clang replacement with driver and cc1 modes
+- Drop-in clang++ replacement with driver and cc1 modes
 - MIR pass disable/replace/insert via `RegisterTargetPassConfigCallback`
 - IR pass disable via `shouldRunOptionalPassCallback`
 - YAML config + CLI flags, plugin loading, pass discovery
@@ -371,4 +430,4 @@ docs/
 
 ## License
 
-See LLVM license terms. flexclang links against LLVM/Clang libraries without modification.
+See LLVM license terms. flexclang++ links against LLVM/Clang libraries without modification.
