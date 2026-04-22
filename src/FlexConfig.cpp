@@ -21,6 +21,12 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
                          int argc, const char **argv) {
   FlexConfig config;
 
+  if (argc > 0) {
+    StringRef path(argv[0]);
+    auto pos = path.rfind('/');
+    config.programName = (pos == StringRef::npos) ? path.str() : path.substr(pos + 1).str();
+  }
+
   for (int i = 1; i < argc; ++i) {
     StringRef arg(argv[i]);
 
@@ -33,14 +39,14 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
     } else if (arg.consume_front("--flex-replace-pass=")) {
       auto [name, plugin] = splitNamePlugin(arg);
       if (plugin.empty()) {
-        errs() << "flexclang: error: --flex-replace-pass requires <name>:<plugin.so> format\n";
+        errs() << config.programName << ": error: --flex-replace-pass requires <name>:<plugin.so> format\n";
         continue;
       }
       config.mirRules.push_back({MIRPassRule::Replace, name, plugin});
     } else if (arg.consume_front("--flex-insert-after=")) {
       auto [name, plugin] = splitNamePlugin(arg);
       if (plugin.empty()) {
-        errs() << "flexclang: error: --flex-insert-after requires <name>:<plugin.so> format\n";
+        errs() << config.programName << ": error: --flex-insert-after requires <name>:<plugin.so> format\n";
         continue;
       }
       config.mirRules.push_back({MIRPassRule::InsertAfter, name, plugin});
@@ -71,19 +77,19 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
 
 bool FlexConfig::printDryRun() const {
   if (!hasModifications()) {
-    errs() << "flexclang: [dry-run] no modifications configured\n";
+    errs() << programName << ": [dry-run] no modifications configured\n";
     return false;
   }
   for (const auto &r : mirRules) {
     const char *acts[] = {"disable", "replace", "insert-after"};
-    errs() << "flexclang: [dry-run] MIR " << acts[r.action]
+    errs() << programName << ": [dry-run] MIR " << acts[r.action]
            << " target='" << r.target << "'";
     if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
     errs() << "\n";
   }
   for (const auto &r : irRules) {
     const char *acts[] = {"disable", "load-plugin"};
-    errs() << "flexclang: [dry-run] IR " << acts[r.action]
+    errs() << programName << ": [dry-run] IR " << acts[r.action]
            << " target='" << r.target << "'";
     if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
     errs() << "\n";
@@ -133,7 +139,7 @@ std::vector<std::string> FlexConfig::buildCC1FlexArgs() const {
 bool parseFlexYAML(FlexConfig &config, StringRef path) {
   auto BufOrErr = MemoryBuffer::getFile(path);
   if (!BufOrErr) {
-    errs() << "flexclang: error: cannot open config '" << path
+    errs() << config.programName << ": error: cannot open config '" << path
            << "': " << BufOrErr.getError().message() << "\n";
     return false;
   }
@@ -173,7 +179,7 @@ bool parseFlexYAML(FlexConfig &config, StringRef path) {
           if (action == "disable") rule.action = MIRPassRule::Disable;
           else if (action == "replace") rule.action = MIRPassRule::Replace;
           else if (action == "insert-after") rule.action = MIRPassRule::InsertAfter;
-          else { errs() << "flexclang: warning: unknown mir action: " << action << "\n"; continue; }
+          else { errs() << config.programName << ": warning: unknown mir action: " << action << "\n"; continue; }
           // CLI takes precedence: skip YAML rule if CLI already has one for same target
           bool dup = false;
           for (const auto &existing : config.mirRules) {
@@ -202,7 +208,7 @@ bool parseFlexYAML(FlexConfig &config, StringRef path) {
           }
           if (action == "disable") rule.action = IRPassRule::Disable;
           else if (action == "load-plugin") rule.action = IRPassRule::LoadPlugin;
-          else { errs() << "flexclang: warning: unknown ir action: " << action << "\n"; continue; }
+          else { errs() << config.programName << ": warning: unknown ir action: " << action << "\n"; continue; }
           // CLI takes precedence: skip YAML rule if CLI already has one for same target
           bool dup = false;
           for (const auto &existing : config.irRules) {

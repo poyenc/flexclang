@@ -24,6 +24,7 @@ struct IRPassRule {
 };
 
 struct FlexConfig {
+  std::string programName;
   std::vector<MIRPassRule> mirRules;
   std::vector<IRPassRule> irRules;
   std::string configFile;
