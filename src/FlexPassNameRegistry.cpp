@@ -11,7 +11,8 @@ namespace flexclang {
 const void *resolvePassID(StringRef passArg) {
   const PassInfo *PI = PassRegistry::getPassRegistry()->getPassInfo(passArg);
   if (!PI) {
-    errs() << "flexclang: error: unknown MIR pass '" << passArg << "'\n";
+    errs() << "flexclang: error: unknown MIR pass '" << passArg
+           << "' (use --flex-list-passes to see available passes)\n";
     return nullptr;
   }
   return PI->getTypeInfo();
