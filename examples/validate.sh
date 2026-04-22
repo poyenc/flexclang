@@ -217,7 +217,7 @@ echo "=== cc1 Test 15: Unknown MIR pass name ==="
 $FLEXCLANG -cc1 --flex-disable-pass=nonexistent-mir-pass \
   $CC1_FLAGS -S -o /tmp/unknown-mir.s $KERNEL \
   2>/tmp/unknown-mir-stderr.txt
-grep -q "flexclang: error: unknown pass 'nonexistent-mir-pass'" /tmp/unknown-mir-stderr.txt
+grep -q "flexclang: error: unknown MIR pass 'nonexistent-mir-pass'" /tmp/unknown-mir-stderr.txt
 echo "PASS: Unknown MIR pass name produces error"
 
 echo "=== cc1 Test 16: --flex-verify-plugins ==="
