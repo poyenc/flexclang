@@ -27,7 +27,6 @@ struct FlexConfig {
   std::vector<MIRPassRule> mirRules;
   std::vector<IRPassRule> irRules;
   std::string configFile;
-  std::string latencyModelFile;
   bool listPasses = false;
   bool verbose = false;
   bool verifyPlugins = false;
@@ -37,8 +36,16 @@ struct FlexConfig {
   bool hasModifications() const {
     return !mirRules.empty() || !irRules.empty();
   }
+
+  /// Print dry-run summary of all configured modifications to stderr.
+  /// Returns true if there were modifications to print.
+  bool printDryRun() const;
 };
 
+/// Parse --flex-* flags from argv, placing non-flex args into remainingArgs.
+/// Starts at argv[1], skipping argv[0] (expected to be program name or sentinel
+/// like "-cc1"). Callers must account for this: pass the full argc/argv with
+/// the program name at argv[0].
 FlexConfig parseFlexArgs(llvm::SmallVectorImpl<const char *> &remainingArgs,
                          int argc, const char **argv);
 

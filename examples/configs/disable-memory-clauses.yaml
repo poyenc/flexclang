@@ -1,3 +1,3 @@
 mir-passes:
   - action: disable
-    target: si-form-memory-clauses
+    target: machine-scheduler

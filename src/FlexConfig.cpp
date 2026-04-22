@@ -32,9 +32,17 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
       config.mirRules.push_back({MIRPassRule::Disable, arg.str(), ""});
     } else if (arg.consume_front("--flex-replace-pass=")) {
       auto [name, plugin] = splitNamePlugin(arg);
+      if (plugin.empty()) {
+        errs() << "flexclang: error: --flex-replace-pass requires <name>:<plugin.so> format\n";
+        continue;
+      }
       config.mirRules.push_back({MIRPassRule::Replace, name, plugin});
     } else if (arg.consume_front("--flex-insert-after=")) {
       auto [name, plugin] = splitNamePlugin(arg);
+      if (plugin.empty()) {
+        errs() << "flexclang: error: --flex-insert-after requires <name>:<plugin.so> format\n";
+        continue;
+      }
       config.mirRules.push_back({MIRPassRule::InsertAfter, name, plugin});
     } else if (arg.consume_front("--flex-disable-ir-pass=")) {
       config.irRules.push_back({IRPassRule::Disable, arg.str(), ""});
@@ -59,6 +67,28 @@ FlexConfig parseFlexArgs(SmallVectorImpl<const char *> &remainingArgs,
   }
 
   return config;
+}
+
+bool FlexConfig::printDryRun() const {
+  if (!hasModifications()) {
+    errs() << "flexclang: [dry-run] no modifications configured\n";
+    return false;
+  }
+  for (const auto &r : mirRules) {
+    const char *acts[] = {"disable", "replace", "insert-after"};
+    errs() << "flexclang: [dry-run] MIR " << acts[r.action]
+           << " target='" << r.target << "'";
+    if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
+    errs() << "\n";
+  }
+  for (const auto &r : irRules) {
+    const char *acts[] = {"disable", "load-plugin"};
+    errs() << "flexclang: [dry-run] IR " << acts[r.action]
+           << " target='" << r.target << "'";
+    if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
+    errs() << "\n";
+  }
+  return true;
 }
 
 bool parseFlexYAML(FlexConfig &config, StringRef path) {
@@ -105,7 +135,13 @@ bool parseFlexYAML(FlexConfig &config, StringRef path) {
           else if (action == "replace") rule.action = MIRPassRule::Replace;
           else if (action == "insert-after") rule.action = MIRPassRule::InsertAfter;
           else { errs() << "flexclang: warning: unknown mir action: " << action << "\n"; continue; }
-          config.mirRules.push_back(rule);
+          // CLI takes precedence: skip YAML rule if CLI already has one for same target
+          bool dup = false;
+          for (const auto &existing : config.mirRules) {
+            if (existing.target == rule.target) { dup = true; break; }
+          }
+          if (!dup)
+            config.mirRules.push_back(rule);
         }
       } else if (KeyRef == "ir-passes") {
         auto *Seq = dyn_cast<yaml::SequenceNode>(KV.getValue());
@@ -128,7 +164,13 @@ bool parseFlexYAML(FlexConfig &config, StringRef path) {
           if (action == "disable") rule.action = IRPassRule::Disable;
           else if (action == "load-plugin") rule.action = IRPassRule::LoadPlugin;
           else { errs() << "flexclang: warning: unknown ir action: " << action << "\n"; continue; }
-          config.irRules.push_back(rule);
+          // CLI takes precedence: skip YAML rule if CLI already has one for same target
+          bool dup = false;
+          for (const auto &existing : config.irRules) {
+            if (existing.target == rule.target) { dup = true; break; }
+          }
+          if (!dup)
+            config.irRules.push_back(rule);
         }
       }
     }

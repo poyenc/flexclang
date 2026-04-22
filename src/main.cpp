@@ -11,6 +11,7 @@
 #include "clang/FrontendTool/Utils.h"
 #include "clang/Serialization/ObjectFilePCHContainerReader.h"
 #include <set>
+#include <vector>
 #include "llvm/ADT/Any.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
@@ -54,26 +55,17 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
       return 1;
   }
 
-  if (config.dryRun && config.hasModifications()) {
-    for (const auto &r : config.mirRules) {
-      const char *acts[] = {"disable", "replace", "insert-after"};
-      errs() << "flexclang: [dry-run] MIR " << acts[r.action]
-             << " target='" << r.target << "'";
-      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
-      errs() << "\n";
-    }
-    for (const auto &r : config.irRules) {
-      const char *acts[] = {"disable", "load-plugin"};
-      errs() << "flexclang: [dry-run] IR " << acts[r.action]
-             << " target='" << r.target << "'";
-      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
-      errs() << "\n";
-    }
+  if (config.dryRun) {
+    config.printDryRun();
     return 0;
   }
 
-  if (config.hasModifications()) {
-    flexclang::registerFlexPassConfigCallback(config);
+  // Shared buffer for MIR pass names (populated by MIRPassListPrinter during
+  // compilation, printed after compilation together with IR pass names).
+  auto mirPassNames = std::make_shared<std::vector<std::string>>();
+
+  if (config.hasModifications() || config.listPasses) {
+    flexclang::registerFlexPassConfigCallback(config, mirPassNames);
   }
 
   ArrayRef<const char *> Args(clangArgs);
@@ -102,11 +94,13 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   DiagsBuffer->FlushDiagnostics(Clang->getDiagnostics());
   if (!Success) return 1;
 
-  // --flex-list-passes: use LLVM's -debug-pass=Structure
-  if (config.listPasses) {
-    const char *args[] = {"flexclang", "-debug-pass=Structure"};
-    cl::ParseCommandLineOptions(2, args, "flexclang pass listing\n");
-  }
+  // IR/MIR pass listing is handled via callbacks:
+  //  - MIR: MIRPassListPrinter in FlexPassConfigCallback (introspects FPPassManager)
+  //  - IR:  registerBeforeNonSkippedPassCallback below
+
+  // Shared state for IR pass collection (used by both list-passes and disable)
+  auto irPassNames = std::make_shared<std::vector<std::string>>();
+  auto irPassNamesSeen = std::make_shared<std::set<std::string>>();
 
   // IR pass modifications via PassBuilderCallbacks
   std::vector<std::string> irDisable;
@@ -120,20 +114,21 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
         irPlugins.push_back(r.plugin);
     }
 
-    if (!irDisable.empty() || !irPlugins.empty()) {
+    bool needCallbacks = !irDisable.empty() || !irPlugins.empty() ||
+                         config.listPasses;
+    if (needCallbacks) {
       bool verbose = config.verbose;
+      bool listPasses = config.listPasses;
       auto irDisableShared = std::make_shared<std::vector<std::string>>(irDisable);
       Clang->getCodeGenOpts().PassBuilderCallbacks.push_back(
-          [irDisableShared, irPlugins, verbose, irMatched](PassBuilder &PB) {
-            if (!irDisableShared->empty()) {
-              auto *PIC = PB.getPassInstrumentationCallbacks();
-              if (PIC) {
+          [irDisableShared, irPlugins, verbose, irMatched, listPasses,
+           irPassNames, irPassNamesSeen](PassBuilder &PB) {
+            auto *PIC = PB.getPassInstrumentationCallbacks();
+            if (PIC) {
+              if (!irDisableShared->empty()) {
                 PIC->registerShouldRunOptionalPassCallback(
                     [irDisableShared, verbose, irMatched,
                      PIC](StringRef Name, Any) {
-                      // Translate class name (e.g. "InstCombinePass") to
-                      // pipeline name (e.g. "instcombine") so users can use
-                      // the same names as -print-after=.
                       StringRef PipelineName =
                           PIC->getPassNameForClassName(Name);
                       for (const auto &d : *irDisableShared) {
@@ -148,6 +143,18 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
                         }
                       }
                       return true;
+                    });
+              }
+              // Collect IR pass names for --flex-list-passes
+              if (listPasses) {
+                PIC->registerBeforeNonSkippedPassCallback(
+                    [irPassNames, irPassNamesSeen,
+                     PIC](StringRef Name, Any) {
+                      StringRef PipelineName =
+                          PIC->getPassNameForClassName(Name);
+                      std::string key = PipelineName.str();
+                      if (irPassNamesSeen->insert(key).second)
+                        irPassNames->push_back(key);
                     });
               }
             }
@@ -166,6 +173,23 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
 
   Success = ExecuteCompilerInvocation(Clang.get());
   remove_fatal_error_handler();
+
+  // Print pass listing: IR first (runs before MIR), then MIR.
+  if (config.listPasses) {
+    errs() << "\n=== IR Optimization Pipeline ===\n";
+    int irIdx = 1;
+    for (const auto &name : *irPassNames)
+      errs() << "  [ir." << irIdx++ << "]  " << name << "\n";
+    errs() << "\nUse --flex-disable-ir-pass=<pass-name> to disable any IR pass "
+              "listed above.\n";
+
+    errs() << "\n=== MIR Codegen Pipeline ===\n";
+    int mirIdx = 1;
+    for (const auto &name : *mirPassNames)
+      errs() << "  [mir." << mirIdx++ << "]  " << name << "\n";
+    errs() << "\nUse --flex-disable-pass=<name> or "
+              "--flex-insert-after=<name>:<plugin.so>\n";
+  }
 
   // Warn about IR passes that were requested for disabling but never matched.
   // This typically means the pass is required (isRequired() == true) and cannot
@@ -202,21 +226,8 @@ static int flexclang_driver_main(int argc, const char **argv) {
   }
 
   // Handle --flex-dry-run
-  if (config.dryRun && config.hasModifications()) {
-    for (const auto &r : config.mirRules) {
-      const char *acts[] = {"disable", "replace", "insert-after"};
-      errs() << "flexclang: [dry-run] MIR " << acts[r.action]
-             << " target='" << r.target << "'";
-      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
-      errs() << "\n";
-    }
-    for (const auto &r : config.irRules) {
-      const char *acts[] = {"disable", "load-plugin"};
-      errs() << "flexclang: [dry-run] IR " << acts[r.action]
-             << " target='" << r.target << "'";
-      if (!r.plugin.empty()) errs() << " plugin=" << r.plugin;
-      errs() << "\n";
-    }
+  if (config.dryRun) {
+    config.printDryRun();
     return 0;
   }
 

@@ -4,7 +4,7 @@ ir-passes:
 
 mir-passes:
   - action: disable
-    target: si-form-memory-clauses
+    target: peephole-opt
   - action: insert-after
     target: machine-scheduler
     plugin: examples/mir-pass-nop-inserter/build/mir-nop-inserter.so
