@@ -13,7 +13,8 @@ namespace flexclang {
 /// tries flexclangCreatePassWithConfig(contents) first.
 /// Falls back to flexclangCreatePass(). Returns nullptr on failure.
 llvm::Pass *loadMIRPassPlugin(llvm::StringRef soPath,
-                               llvm::StringRef configPath = "");
+                               llvm::StringRef configPath = "",
+                               bool verbose = false);
 
 } // namespace flexclang
 

@@ -8,7 +8,7 @@ using namespace llvm;
 
 namespace flexclang {
 
-Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath) {
+Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath, bool verbose) {
   std::string errMsg;
   auto Lib =
       sys::DynamicLibrary::getPermanentLibrary(soPath.str().c_str(), &errMsg);
@@ -58,12 +58,14 @@ Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath) {
     return nullptr;
   }
 
-  // Print name if available.
-  using PassNameFn = const char *(*)();
-  auto *GetName = reinterpret_cast<PassNameFn>(
-      Lib.getAddressOfSymbol("flexclangPassName"));
-  if (GetName)
-    errs() << "flexclang: loaded MIR plugin '" << GetName() << "'\n";
+  // Print name if available and verbose is enabled.
+  if (verbose) {
+    using PassNameFn = const char *(*)();
+    auto *GetName = reinterpret_cast<PassNameFn>(
+        Lib.getAddressOfSymbol("flexclangPassName"));
+    if (GetName)
+      errs() << "flexclang: loaded MIR plugin '" << GetName() << "'\n";
+  }
 
   return P;
 }

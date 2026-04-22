@@ -11,6 +11,11 @@ const void *resolvePassID(llvm::StringRef passArg);
 /// Returns true if disabling this pass is likely to cause miscompilation.
 bool isCriticalPass(llvm::StringRef passArg);
 
+/// Returns true if this AMDGPU pass is added via insertPass() and cannot
+/// be disabled via disablePass()/substitutePass(). These passes bypass
+/// the TargetPassConfig substitution mechanism.
+bool isNonSubstitutablePass(llvm::StringRef passArg);
+
 } // namespace flexclang
 
 #endif
