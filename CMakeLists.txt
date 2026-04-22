@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(flexclang VERSION 0.1.0)
+project(flexclang++ VERSION 0.1.0)
 
 find_package(LLVM REQUIRED CONFIG)
 find_package(Clang REQUIRED CONFIG)
@@ -11,7 +11,7 @@ include_directories(${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
 separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
 add_definitions(${LLVM_DEFINITIONS_LIST})
 
-add_executable(flexclang
+add_executable(flexclang++
   src/main.cpp
   src/FlexConfig.cpp
   src/FlexPassNameRegistry.cpp
@@ -26,13 +26,13 @@ llvm_map_components_to_libnames(LLVM_LIBS
   TransformUtils ScalarOpts InstCombine MC MCParser Option ipo
 )
 
-target_link_libraries(flexclang PRIVATE
+target_link_libraries(flexclang++ PRIVATE
   clangFrontend clangFrontendTool clangCodeGen
   clangDriver clangBasic clangSerialization clangOptions
   ${LLVM_LIBS}
 )
 
-target_compile_features(flexclang PRIVATE cxx_std_17)
-target_compile_options(flexclang PRIVATE -fno-rtti)
-set_target_properties(flexclang PROPERTIES ENABLE_EXPORTS ON)
-install(TARGETS flexclang DESTINATION bin)
+target_compile_features(flexclang++ PRIVATE cxx_std_17)
+target_compile_options(flexclang++ PRIVATE -fno-rtti)
+set_target_properties(flexclang++ PROPERTIES ENABLE_EXPORTS ON)
+install(TARGETS flexclang++ DESTINATION bin)
