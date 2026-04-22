@@ -276,13 +276,18 @@ static int flexclang_driver_main(int argc, const char **argv) {
   if (!C)
     return 1;
 
+  // Build expanded --flex-* flags for cc1 injection.
+  // This expands YAML rules into individual CLI flags and excludes
+  // --flex-config (which would trigger IO sandbox violations in cc1).
+  auto cc1FlexArgs = config.buildCC1FlexArgs();
+
   // Inject --flex-* flags into AMDGCN cc1 commands
-  if (!config.originalFlexArgs.empty()) {
+  if (!cc1FlexArgs.empty()) {
     for (auto &Job : C->getJobs()) {
       if (!hasAMDGCNTriple(Job.getArguments()))
         continue;
       auto Args = Job.getArguments();
-      for (const auto &FlexArg : config.originalFlexArgs)
+      for (const auto &FlexArg : cc1FlexArgs)
         Args.push_back(C->getArgs().MakeArgString(FlexArg));
       Job.replaceArguments(std::move(Args));
     }

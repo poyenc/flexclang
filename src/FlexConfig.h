@@ -40,6 +40,11 @@ struct FlexConfig {
   /// Print dry-run summary of all configured modifications to stderr.
   /// Returns true if there were modifications to print.
   bool printDryRun() const;
+
+  /// Build the list of --flex-* CLI flags to inject into cc1 commands in
+  /// driver mode. Expands YAML rules into individual flags and excludes
+  /// --flex-config (which would cause IO sandbox violations in cc1).
+  std::vector<std::string> buildCC1FlexArgs() const;
 };
 
 /// Parse --flex-* flags from argv, placing non-flex args into remainingArgs.

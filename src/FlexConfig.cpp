@@ -91,6 +91,45 @@ bool FlexConfig::printDryRun() const {
   return true;
 }
 
+std::vector<std::string> FlexConfig::buildCC1FlexArgs() const {
+  std::vector<std::string> args;
+
+  for (const auto &r : mirRules) {
+    switch (r.action) {
+    case MIRPassRule::Disable:
+      args.push_back("--flex-disable-pass=" + r.target);
+      break;
+    case MIRPassRule::Replace:
+      args.push_back("--flex-replace-pass=" + r.target + ":" + r.plugin);
+      break;
+    case MIRPassRule::InsertAfter:
+      args.push_back("--flex-insert-after=" + r.target + ":" + r.plugin);
+      break;
+    }
+  }
+
+  for (const auto &r : irRules) {
+    switch (r.action) {
+    case IRPassRule::Disable:
+      args.push_back("--flex-disable-ir-pass=" + r.target);
+      break;
+    case IRPassRule::LoadPlugin:
+      // IR plugins loaded via -fpass-plugin (standard clang flag)
+      args.push_back("-fpass-plugin=" + r.plugin);
+      break;
+    }
+  }
+
+  if (listPasses) args.push_back("--flex-list-passes");
+  if (verbose) args.push_back("--flex-verbose");
+  if (verifyPlugins) args.push_back("--flex-verify-plugins");
+  // Note: --flex-config and --flex-dry-run are intentionally excluded.
+  // --flex-config would cause IO sandbox violations in cc1.
+  // --flex-dry-run is handled in driver mode before cc1 runs.
+
+  return args;
+}
+
 bool parseFlexYAML(FlexConfig &config, StringRef path) {
   auto BufOrErr = MemoryBuffer::getFile(path);
   if (!BufOrErr) {

@@ -223,16 +223,74 @@ echo 'int main() { return 0; }' > /tmp/test.c
 $FLEXCLANG /tmp/test.c -c -o /tmp/driver-test.o 2>/dev/null
 echo "PASS: Driver mode compiles C"
 
-echo "=== Driver Test 2: HIP kernel compilation ==="
-$FLEXCLANG -x hip $DRIVER_KERNEL --offload-arch=$ARCH -O2 -S -o /tmp/driver-baseline.s
-echo "PASS: Driver mode compiles full HIP kernel"
+# Driver-mode HIP flags: --cuda-device-only -nogpulib avoids dependency on
+# ROCm system headers and device libraries, which may not match this LLVM build.
+DRIVER_HIP_FLAGS="-x hip --offload-arch=$ARCH -O2 --cuda-device-only -nogpulib"
 
-echo "=== Driver Test 3: Flex flags in driver mode ==="
+echo "=== Driver Test 2: HIP kernel compilation ==="
+$FLEXCLANG $DRIVER_HIP_FLAGS -S -o /tmp/driver-baseline.s $DRIVER_KERNEL
+grep -q "mfma" /tmp/driver-baseline.s
+echo "PASS: Driver mode compiles HIP kernel with MFMA"
+
+echo "=== Driver Test 3: Flex flags change assembly ==="
 $FLEXCLANG --flex-verbose --flex-disable-pass=machine-scheduler \
-  -x hip $DRIVER_KERNEL --offload-arch=$ARCH -O2 -S -o /tmp/driver-disabled.s \
+  $DRIVER_HIP_FLAGS -S -o /tmp/driver-disabled.s $DRIVER_KERNEL \
   2>/tmp/driver-stderr.txt
 grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/driver-stderr.txt
-echo "PASS: Flex flags work in driver mode"
+if diff -q /tmp/driver-baseline.s /tmp/driver-disabled.s > /dev/null 2>&1; then
+  echo "WARNING: disabling machine-scheduler produced identical driver output"
+else
+  echo "PASS: Flex flags change assembly in driver mode"
+fi
+
+echo "=== Driver Test 4: MIR plugin in driver mode ==="
+$FLEXCLANG --flex-insert-after=machine-scheduler:$MIR_PLUGIN \
+  $DRIVER_HIP_FLAGS -S -o /tmp/driver-mir-plugin.s $DRIVER_KERNEL \
+  2>/tmp/driver-mir-stderr.txt
+grep -q "\[MIRNopInserter\]" /tmp/driver-mir-stderr.txt
+DRIVER_BASELINE_NOPS=$(grep -c "s_nop" /tmp/driver-baseline.s || true)
+DRIVER_PLUGIN_NOPS=$(grep -c "s_nop" /tmp/driver-mir-plugin.s || true)
+if [ "$DRIVER_PLUGIN_NOPS" -gt "$DRIVER_BASELINE_NOPS" ]; then
+  echo "PASS: MIR plugin works in driver mode (baseline=$DRIVER_BASELINE_NOPS, plugin=$DRIVER_PLUGIN_NOPS)"
+else
+  echo "FAIL: Expected more s_nop in driver mode MIR plugin output"
+  exit 1
+fi
+
+echo "=== Driver Test 5: YAML config in driver mode ==="
+$FLEXCLANG --flex-config=examples/configs/combined.yaml \
+  $DRIVER_HIP_FLAGS -S -o /tmp/driver-yaml.s $DRIVER_KERNEL \
+  2>/tmp/driver-yaml-stderr.txt
+grep -q "\[IRInstCounter\]" /tmp/driver-yaml-stderr.txt
+grep -q "\[MIRNopInserter\]" /tmp/driver-yaml-stderr.txt
+echo "PASS: YAML config works in driver mode"
+
+echo "=== Driver Test 6: --flex-dry-run in driver mode ==="
+rm -f /tmp/driver-dryrun-out.s
+$FLEXCLANG --flex-dry-run \
+  --flex-disable-pass=machine-scheduler \
+  $DRIVER_HIP_FLAGS -S -o /tmp/driver-dryrun-out.s $DRIVER_KERNEL \
+  2>/tmp/driver-dryrun-stderr.txt || true
+grep -q "\[dry-run\] MIR disable" /tmp/driver-dryrun-stderr.txt
+if [ -f /tmp/driver-dryrun-out.s ]; then
+  echo "FAIL: --flex-dry-run in driver mode should not produce output file"
+  exit 1
+fi
+echo "PASS: --flex-dry-run works in driver mode"
+
+echo "=== Driver Test 7: Host code unaffected by flex flags ==="
+# Compile a plain C file with flex flags -- host compilation should succeed
+# and flex flags should not interfere (AMDGCN-only guard)
+echo 'int main() { return 42; }' > /tmp/driver-host-test.c
+$FLEXCLANG --flex-verbose --flex-disable-pass=machine-scheduler \
+  /tmp/driver-host-test.c -c -o /tmp/driver-host-flex.o \
+  2>/tmp/driver-host-stderr.txt
+# No flex messages should appear for host-only compilation (no AMDGCN jobs)
+if grep -q "flexclang: requesting disable" /tmp/driver-host-stderr.txt; then
+  echo "FAIL: Flex flags should not affect host-only compilation"
+  exit 1
+fi
+echo "PASS: Host code unaffected by flex flags"
 
 echo ""
 echo "All tests passed!"
