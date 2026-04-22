@@ -1,6 +1,6 @@
 # flexclang Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build flexclang, a drop-in clang replacement that lets AMDGPU HIP kernel developers disable, replace, and insert MIR/IR passes via CLI flags and YAML config.
 
@@ -39,7 +39,7 @@ friendly-clang/
       MIRNopInserter.cpp                  # Example MIR pass plugin
       CMakeLists.txt
     configs/
-      disable-memory-clauses.yaml
+      disable-scheduler.yaml
       insert-nop-after-sched.yaml
       combined.yaml
 ```
@@ -54,7 +54,7 @@ friendly-clang/
 
 Build a minimal flexclang that mirrors `cc1_main()` and compiles a simple C file. Proves linking against LLVM/Clang works.
 
-- [ ] **Step 1: Create CMakeLists.txt**
+- [x] **Step 1: Create CMakeLists.txt**
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
@@ -89,7 +89,7 @@ target_compile_features(flexclang PRIVATE cxx_std_17)
 install(TARGETS flexclang DESTINATION bin)
 ```
 
-- [ ] **Step 2: Create minimal src/main.cpp**
+- [x] **Step 2: Create minimal src/main.cpp**
 
 ```cpp
 // src/main.cpp
@@ -153,7 +153,7 @@ int main(int argc, const char **argv) {
 }
 ```
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 ```bash
 mkdir -p build && cd build
@@ -163,7 +163,7 @@ make -j$(nproc) 2>&1 | tail -5
 
 Expected: Build succeeds, produces `./flexclang`.
 
-- [ ] **Step 4: Test baseline compilation**
+- [x] **Step 4: Test baseline compilation**
 
 ```bash
 echo 'int main() { return 0; }' > /tmp/test.c
@@ -173,7 +173,7 @@ echo "Exit code: $?"
 
 Expected: Exit code 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add CMakeLists.txt src/main.cpp
@@ -192,7 +192,7 @@ git commit -m "feat: minimal flexclang binary mirroring cc1_main"
 
 Parse `--flex-*` flags, strip them before passing to clang, store in `FlexConfig`. Also parse YAML config files.
 
-- [ ] **Step 1: Create src/FlexConfig.h**
+- [x] **Step 1: Create src/FlexConfig.h**
 
 ```cpp
 #ifndef FLEXCLANG_FLEXCONFIG_H
@@ -245,7 +245,7 @@ bool parseFlexYAML(FlexConfig &config, llvm::StringRef path);
 #endif
 ```
 
-- [ ] **Step 2: Create src/FlexConfig.cpp**
+- [x] **Step 2: Create src/FlexConfig.cpp**
 
 ```cpp
 #include "FlexConfig.h"
@@ -383,7 +383,7 @@ bool parseFlexYAML(FlexConfig &config, StringRef path) {
 } // namespace flexclang
 ```
 
-- [ ] **Step 3: Update main.cpp to use FlexConfig**
+- [x] **Step 3: Update main.cpp to use FlexConfig**
 
 Replace the `Args` and `CreateFromArgs` section in `main.cpp`:
 
@@ -425,7 +425,7 @@ Replace the `Args` and `CreateFromArgs` section in `main.cpp`:
       CompilerInvocation::CreateFromArgs(*Invocation, Args, Diags, argv[0]);
 ```
 
-- [ ] **Step 4: Update CMakeLists.txt**
+- [x] **Step 4: Update CMakeLists.txt**
 
 ```cmake
 add_executable(flexclang
@@ -434,14 +434,14 @@ add_executable(flexclang
 )
 ```
 
-- [ ] **Step 5: Build and test**
+- [x] **Step 5: Build and test**
 
 ```bash
 cd build && make -j$(nproc) 2>&1 | tail -3
 
 # Test flex flags stripped, compilation works
 echo 'int main() { return 0; }' > /tmp/test.c
-./flexclang --flex-disable-pass=si-form-memory-clauses -emit-obj -o /tmp/test.o /tmp/test.c
+./flexclang --flex-disable-pass=machine-scheduler -emit-obj -o /tmp/test.o /tmp/test.c
 echo "Flex flag stripping: $?"
 
 # Test dry-run
@@ -450,7 +450,7 @@ echo "Flex flag stripping: $?"
 
 Expected: First exits 0. Second prints dry-run output and exits 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/FlexConfig.h src/FlexConfig.cpp src/main.cpp CMakeLists.txt
@@ -468,7 +468,7 @@ git commit -m "feat: FlexConfig CLI + YAML parsing with --flex-dry-run"
 
 Resolve pass argument strings (e.g., `"si-form-memory-clauses"`) to `AnalysisID` (`void*`) using `PassRegistry::getPassInfo(StringRef)`.
 
-- [ ] **Step 1: Create src/FlexPassNameRegistry.h**
+- [x] **Step 1: Create src/FlexPassNameRegistry.h**
 
 ```cpp
 #ifndef FLEXCLANG_FLEXPASSNAMEREGISTRY_H
@@ -489,7 +489,7 @@ bool isCriticalPass(llvm::StringRef passArg);
 #endif
 ```
 
-- [ ] **Step 2: Create src/FlexPassNameRegistry.cpp**
+- [x] **Step 2: Create src/FlexPassNameRegistry.cpp**
 
 ```cpp
 #include "FlexPassNameRegistry.h"
@@ -523,7 +523,7 @@ bool isCriticalPass(StringRef passArg) {
 } // namespace flexclang
 ```
 
-- [ ] **Step 3: Update CMakeLists.txt**
+- [x] **Step 3: Update CMakeLists.txt**
 
 ```cmake
 add_executable(flexclang
@@ -533,13 +533,13 @@ add_executable(flexclang
 )
 ```
 
-- [ ] **Step 4: Build**
+- [x] **Step 4: Build**
 
 ```bash
 cd build && make -j$(nproc) 2>&1 | tail -3
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/FlexPassNameRegistry.h src/FlexPassNameRegistry.cpp CMakeLists.txt
@@ -557,7 +557,7 @@ git commit -m "feat: FlexPassNameRegistry resolves pass names to AnalysisID"
 
 Load MIR pass plugin `.so` files via `DynamicLibrary`, find `flexclangCreatePass` or `flexclangCreatePassWithConfig` factory.
 
-- [ ] **Step 1: Create src/FlexPassLoader.h**
+- [x] **Step 1: Create src/FlexPassLoader.h**
 
 ```cpp
 #ifndef FLEXCLANG_FLEXPASSLOADER_H
@@ -582,7 +582,7 @@ llvm::Pass *loadMIRPassPlugin(llvm::StringRef soPath,
 #endif
 ```
 
-- [ ] **Step 2: Create src/FlexPassLoader.cpp**
+- [x] **Step 2: Create src/FlexPassLoader.cpp**
 
 ```cpp
 #include "FlexPassLoader.h"
@@ -657,7 +657,7 @@ Pass *loadMIRPassPlugin(StringRef soPath, StringRef configPath) {
 } // namespace flexclang
 ```
 
-- [ ] **Step 3: Update CMakeLists.txt**
+- [x] **Step 3: Update CMakeLists.txt**
 
 ```cmake
 add_executable(flexclang
@@ -668,13 +668,13 @@ add_executable(flexclang
 )
 ```
 
-- [ ] **Step 4: Build**
+- [x] **Step 4: Build**
 
 ```bash
 cd build && make -j$(nproc) 2>&1 | tail -3
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/FlexPassLoader.h src/FlexPassLoader.cpp CMakeLists.txt
@@ -693,7 +693,7 @@ git commit -m "feat: FlexPassLoader for dynamic .so MIR pass loading"
 
 The core: register `RegisterTargetPassConfigCallback` to intercept the MIR pipeline.
 
-- [ ] **Step 1: Create src/FlexPassConfigCallback.h**
+- [x] **Step 1: Create src/FlexPassConfigCallback.h**
 
 ```cpp
 #ifndef FLEXCLANG_FLEXPASSCONFIGCALLBACK_H
@@ -712,7 +712,7 @@ void registerFlexPassConfigCallback(const FlexConfig &config);
 #endif
 ```
 
-- [ ] **Step 2: Create src/FlexPassConfigCallback.cpp**
+- [x] **Step 2: Create src/FlexPassConfigCallback.cpp**
 
 ```cpp
 #include "FlexPassConfigCallback.h"
@@ -785,7 +785,7 @@ void registerFlexPassConfigCallback(const FlexConfig &config) {
 } // namespace flexclang
 ```
 
-- [ ] **Step 3: Update main.cpp**
+- [x] **Step 3: Update main.cpp**
 
 Add after YAML parsing, before `CompilerInvocation::CreateFromArgs`:
 
@@ -798,7 +798,7 @@ Add after YAML parsing, before `CompilerInvocation::CreateFromArgs`:
   }
 ```
 
-- [ ] **Step 4: Update CMakeLists.txt**
+- [x] **Step 4: Update CMakeLists.txt**
 
 ```cmake
 add_executable(flexclang
@@ -810,20 +810,20 @@ add_executable(flexclang
 )
 ```
 
-- [ ] **Step 5: Build and test MIR disable**
+- [x] **Step 5: Build and test MIR disable**
 
 ```bash
 cd build && make -j$(nproc) 2>&1 | tail -3
 
 echo '__global__ void k(float *p) { p[0] = 1.0f; }' > /tmp/k.hip
-./flexclang --flex-verbose --flex-disable-pass=si-form-memory-clauses \
+./flexclang --flex-verbose --flex-disable-pass=machine-scheduler \
   -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
   -emit-obj -o /tmp/k.o /tmp/k.hip 2>&1
 ```
 
-Expected: Output includes `flexclang: disabled MIR pass 'si-form-memory-clauses'`.
+Expected: Output includes `flexclang: requesting disable of MIR pass 'machine-scheduler'`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/FlexPassConfigCallback.h src/FlexPassConfigCallback.cpp src/main.cpp CMakeLists.txt
@@ -839,7 +839,7 @@ git commit -m "feat: MIR pass interception via RegisterTargetPassConfigCallback"
 
 Add `--flex-disable-ir-pass` via `shouldRunOptionalPassCallback` and `--flex-list-passes` via `-debug-pass=Structure`.
 
-- [ ] **Step 1: Add IR pass disable and list-passes to main.cpp**
+- [x] **Step 1: Add IR pass disable and list-passes to main.cpp**
 
 After `CompilerInstance` creation, before `ExecuteCompilerInvocation`:
 
@@ -898,7 +898,7 @@ After `CompilerInstance` creation, before `ExecuteCompilerInvocation`:
   }
 ```
 
-- [ ] **Step 2: Build and test**
+- [x] **Step 2: Build and test**
 
 ```bash
 cd build && make -j$(nproc) 2>&1 | tail -3
@@ -917,7 +917,7 @@ echo '__global__ void k() {}' > /tmp/k.hip
 
 Expected: IR disable shows skipping messages. List-passes shows pass structure.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/main.cpp
@@ -932,11 +932,11 @@ git commit -m "feat: --flex-disable-ir-pass and --flex-list-passes"
 - Create: `examples/ir-pass-counter/IRInstCounter.cpp`
 - Create: `examples/ir-pass-counter/CMakeLists.txt`
 
-- [ ] **Step 1: Create IRInstCounter.cpp**
+- [x] **Step 1: Create IRInstCounter.cpp**
 
 Copy verbatim from spec Section 10.1.
 
-- [ ] **Step 2: Create CMakeLists.txt**
+- [x] **Step 2: Create CMakeLists.txt**
 
 ```cmake
 cmake_minimum_required(VERSION 3.20)
@@ -952,7 +952,7 @@ target_compile_options(ir-inst-counter PRIVATE -fno-rtti -fPIC)
 set_target_properties(ir-inst-counter PROPERTIES PREFIX "" SUFFIX ".so")
 ```
 
-- [ ] **Step 3: Build and test**
+- [x] **Step 3: Build and test**
 
 ```bash
 cd examples/ir-pass-counter
@@ -966,7 +966,7 @@ echo 'int foo(int x) { return x * 2 + 1; }' > /tmp/test.c
 
 Expected: `[IRInstCounter] foo: N instructions`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add examples/ir-pass-counter/
@@ -981,15 +981,15 @@ git commit -m "feat: example IR pass plugin (instruction counter)"
 - Create: `examples/mir-pass-nop-inserter/MIRNopInserter.cpp`
 - Create: `examples/mir-pass-nop-inserter/CMakeLists.txt`
 
-- [ ] **Step 1: Create MIRNopInserter.cpp**
+- [x] **Step 1: Create MIRNopInserter.cpp**
 
 Copy verbatim from spec Section 10.2 (includes `AMDGPU.h` and `SIInstrInfo.h`).
 
-- [ ] **Step 2: Create CMakeLists.txt**
+- [x] **Step 2: Create CMakeLists.txt**
 
 Copy verbatim from spec Section 10.6.
 
-- [ ] **Step 3: Build and test**
+- [x] **Step 3: Build and test**
 
 ```bash
 cd examples/mir-pass-nop-inserter
@@ -1010,7 +1010,7 @@ grep -c "s_nop" /tmp/k.s
 
 Expected: `flexclang: inserted after 'machine-scheduler'` and `s_nop` count > 0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add examples/mir-pass-nop-inserter/
@@ -1023,24 +1023,24 @@ git commit -m "feat: example MIR pass plugin (NOP inserter)"
 
 **Files:**
 - Create: `examples/test_kernel.hip`
-- Create: `examples/configs/disable-memory-clauses.yaml`
+- Create: `examples/configs/disable-scheduler.yaml`
 - Create: `examples/configs/insert-nop-after-sched.yaml`
 - Create: `examples/configs/combined.yaml`
 - Create: `examples/validate.sh`
 
-- [ ] **Step 1: Create test_kernel.hip**
+- [x] **Step 1: Create test_kernel.hip**
 
 Copy verbatim from spec Section 10.3 (uses `__builtin_amdgcn_mfma_f32_32x32x8f16`).
 
-- [ ] **Step 2: Create YAML configs**
+- [x] **Step 2: Create YAML configs**
 
 Copy from spec Section 10.4 (three files).
 
-- [ ] **Step 3: Create validate.sh**
+- [x] **Step 3: Create validate.sh**
 
 Copy from spec Section 10.5. Add `chmod +x`.
 
-- [ ] **Step 4: Run validation**
+- [x] **Step 4: Run validation**
 
 ```bash
 cd /home/poyechen/workspace/repo/friendly-clang
@@ -1050,7 +1050,7 @@ FLEXCLANG=./build/flexclang ./examples/validate.sh
 
 Expected: `All tests passed!`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add examples/
@@ -1063,7 +1063,7 @@ git commit -m "feat: test kernel, YAML configs, and validation script"
 
 **Files:** None new.
 
-- [ ] **Step 1: Clean build everything**
+- [x] **Step 1: Clean build everything**
 
 ```bash
 cd /home/poyechen/workspace/repo/friendly-clang
@@ -1089,7 +1089,7 @@ cmake --build build
 cd ../..
 ```
 
-- [ ] **Step 2: Run validation script**
+- [x] **Step 2: Run validation script**
 
 ```bash
 FLEXCLANG=./build/flexclang ./examples/validate.sh
@@ -1097,7 +1097,7 @@ FLEXCLANG=./build/flexclang ./examples/validate.sh
 
 Expected: `All tests passed!`
 
-- [ ] **Step 3: Bit-identity test (no flex flags)**
+- [x] **Step 3: Bit-identity test (no flex flags)**
 
 ```bash
 echo '__global__ void k(float *p) { p[0] = 1.0f; }' > /tmp/k.hip
@@ -1115,7 +1115,7 @@ echo "Bit-identical: $? (0=yes)"
 
 Expected: Exit code 0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A && git commit -m "chore: end-to-end integration verified"

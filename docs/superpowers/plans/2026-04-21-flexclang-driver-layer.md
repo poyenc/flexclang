@@ -1,6 +1,6 @@
 # flexclang Driver Layer Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add driver-level support so `CMAKE_CXX_COMPILER=flexclang` works for HIP builds, handling `--offload-arch`, host+device compilation, and offload bundling.
 
@@ -37,7 +37,7 @@ friendly-clang/
 
 Save the raw `--flex-*` argv strings during parsing so they can be re-injected into cc1 commands in driver mode.
 
-- [ ] **Step 1: Add `originalFlexArgs` field to FlexConfig**
+- [x] **Step 1: Add `originalFlexArgs` field to FlexConfig**
 
 In `src/FlexConfig.h`, add a new field to `FlexConfig` struct after `dryRun`:
 
@@ -46,7 +46,7 @@ In `src/FlexConfig.h`, add a new field to `FlexConfig` struct after `dryRun`:
   std::vector<std::string> originalFlexArgs; // Raw --flex-* strings for driver mode injection
 ```
 
-- [ ] **Step 2: Save original flex strings in `parseFlexArgs`**
+- [x] **Step 2: Save original flex strings in `parseFlexArgs`**
 
 In `src/FlexConfig.cpp`, inside each `--flex-*` branch (lines 27-46), add `config.originalFlexArgs.push_back(argv[i]);` before the existing logic. The cleanest way: save the original string at the top of the if/else chain, before `consume_front` modifies the StringRef.
 
@@ -88,7 +88,7 @@ Replace the loop body (lines 24-49 of `FlexConfig.cpp`) with:
 
 Note: the `originalFlexArgs.push_back` must happen BEFORE `consume_front` modifies the StringRef. The `starts_with("--flex-")` check is separate from the if/else chain so it captures the original string before any consume_front.
 
-- [ ] **Step 3: Build**
+- [x] **Step 3: Build**
 
 ```bash
 cd /home/poyechen/workspace/repo/friendly-clang/build && make -j$(nproc) 2>&1 | tail -3
@@ -96,7 +96,7 @@ cd /home/poyechen/workspace/repo/friendly-clang/build && make -j$(nproc) 2>&1 | 
 
 Expected: Build succeeds.
 
-- [ ] **Step 4: Test that existing behavior is unchanged**
+- [x] **Step 4: Test that existing behavior is unchanged**
 
 ```bash
 echo 'int foo(int x) { return x + 1; }' > /tmp/test.c
@@ -107,7 +107,7 @@ echo "Exit: $?"
 
 Expected: Still shows "skipping IR pass" messages, exits 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/FlexConfig.h src/FlexConfig.cpp
@@ -123,7 +123,7 @@ git commit -m "feat: save original --flex-* args for driver mode injection"
 
 Refactor the current `main()` into a static `flexclang_cc1_main()` function matching the `Driver::CC1ToolFunc` signature. The new `main()` dispatches based on `-cc1`.
 
-- [ ] **Step 1: Add new includes and forward declarations**
+- [x] **Step 1: Add new includes and forward declarations**
 
 Add at the top of `src/main.cpp` after existing includes:
 
@@ -136,7 +136,7 @@ Add at the top of `src/main.cpp` after existing includes:
 #include "llvm/Support/Process.h"
 ```
 
-- [ ] **Step 2: Extract cc1 function**
+- [x] **Step 2: Extract cc1 function**
 
 Rename the current `main()` to `flexclang_cc1_main` with this signature:
 
@@ -292,7 +292,7 @@ Key changes from the original `main()`:
 - Uses `ArgV[0]` instead of `argv[0]` for `CreateFromArgs`
 - Computes `cc1Argc`/`cc1Argv` from `ArgV` to skip the first element
 
-- [ ] **Step 3: Write new `main()` dispatch**
+- [x] **Step 3: Write new `main()` dispatch**
 
 Add below `flexclang_cc1_main`:
 
@@ -317,7 +317,7 @@ int main(int argc, const char **argv) {
 }
 ```
 
-- [ ] **Step 4: Build and test cc1 mode still works**
+- [x] **Step 4: Build and test cc1 mode still works**
 
 ```bash
 cd /home/poyechen/workspace/repo/friendly-clang/build && cmake .. -DCMAKE_PREFIX_PATH=/home/poyechen/workspace/repo/llvm-project/build && make -j$(nproc) 2>&1 | tail -5
@@ -342,7 +342,7 @@ echo "Driver mode exit: $?"
 
 Expected: "flexclang: driver mode not yet implemented", exit 1.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/main.cpp
@@ -358,7 +358,7 @@ git commit -m "refactor: extract flexclang_cc1_main, add -cc1 dispatch"
 
 Implement `flexclang_driver_main()` using clang's `Driver` class.
 
-- [ ] **Step 1: Add helper function to detect AMDGCN cc1 jobs**
+- [x] **Step 1: Add helper function to detect AMDGCN cc1 jobs**
 
 Add above `main()` in `src/main.cpp`:
 
@@ -374,7 +374,7 @@ static bool hasAMDGCNTriple(const llvm::opt::ArgStringList &Args) {
 }
 ```
 
-- [ ] **Step 2: Implement `flexclang_driver_main`**
+- [x] **Step 2: Implement `flexclang_driver_main`**
 
 Add above `main()`:
 
@@ -457,7 +457,7 @@ static int flexclang_driver_main(int argc, const char **argv) {
 }
 ```
 
-- [ ] **Step 3: Replace the driver mode placeholder in `main()`**
+- [x] **Step 3: Replace the driver mode placeholder in `main()`**
 
 Replace the placeholder in `main()`:
 
@@ -481,7 +481,7 @@ int main(int argc, const char **argv) {
 }
 ```
 
-- [ ] **Step 4: Build**
+- [x] **Step 4: Build**
 
 ```bash
 cd /home/poyechen/workspace/repo/friendly-clang/build && cmake .. -DCMAKE_PREFIX_PATH=/home/poyechen/workspace/repo/llvm-project/build && make -j$(nproc) 2>&1 | tail -5
@@ -489,7 +489,7 @@ cd /home/poyechen/workspace/repo/friendly-clang/build && cmake .. -DCMAKE_PREFIX
 
 Expected: Build succeeds. Fix any missing includes or link errors. If link errors occur for `clang::driver::Driver`, try adding `clangLex` to `target_link_libraries` in `CMakeLists.txt`.
 
-- [ ] **Step 5: Test driver mode with simple C file**
+- [x] **Step 5: Test driver mode with simple C file**
 
 ```bash
 echo 'int main() { return 0; }' > /tmp/test.c
@@ -499,7 +499,7 @@ echo "Driver mode C: $?"
 
 Expected: Exit 0 (driver compiles C file via cc1).
 
-- [ ] **Step 6: Test driver mode with HIP kernel (requires co-installation)**
+- [x] **Step 6: Test driver mode with HIP kernel (requires co-installation)**
 
 First, check if flexclang can find HIP headers by checking where the linked clang is:
 
@@ -518,16 +518,16 @@ echo "Driver mode HIP: $?"
 
 Expected: Exit 0. If HIP headers are missing, the error will be about `hip_runtime.h` -- that's a setup issue, not a flexclang bug.
 
-- [ ] **Step 7: Test flex flags in driver mode**
+- [x] **Step 7: Test flex flags in driver mode**
 
 ```bash
-$CLANG_BIN/flexclang --flex-verbose --flex-disable-pass=si-form-memory-clauses \
+$CLANG_BIN/flexclang --flex-verbose --flex-disable-pass=machine-scheduler \
   -x hip /tmp/k.hip --offload-arch=gfx942 -c -o /tmp/k.o 2>&1 | grep "flexclang:"
 ```
 
-Expected: Shows `flexclang: disabled MIR pass 'si-form-memory-clauses'` (from the AMDGCN cc1 job only, not from the host cc1 job).
+Expected: Shows `flexclang: requesting disable of MIR pass 'machine-scheduler'` (from the AMDGCN cc1 job only, not from the host cc1 job).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/main.cpp CMakeLists.txt
@@ -544,7 +544,7 @@ git commit -m "feat: driver mode for CMAKE_CXX_COMPILER=flexclang support"
 
 Update the validation script to add `-cc1` to existing cc1-mode tests and add new driver-mode tests.
 
-- [ ] **Step 1: Update validate.sh**
+- [x] **Step 1: Update validate.sh**
 
 Rewrite `examples/validate.sh` to include both cc1-mode and driver-mode test sections:
 
@@ -580,10 +580,10 @@ grep -q "machine-scheduler" /tmp/pass-list.txt
 echo "PASS: machine-scheduler found in pass list"
 
 echo "=== cc1 Test 3: Disable pass ==="
-$FLEXCLANG -cc1 --flex-disable-pass=si-form-memory-clauses \
+$FLEXCLANG -cc1 --flex-disable-pass=machine-scheduler \
   $CC1_FLAGS -S -o /tmp/disabled.s $KERNEL
 if diff -q /tmp/baseline.s /tmp/disabled.s > /dev/null 2>&1; then
-  echo "WARNING: disabling si-form-memory-clauses produced identical output"
+  echo "WARNING: disabling machine-scheduler produced identical output"
 else
   echo "PASS: Disabling pass changed assembly output"
 fi
@@ -637,7 +637,7 @@ $FLEXCLANG -x hip $KERNEL --offload-arch=$ARCH -O2 -S -o /tmp/driver-baseline.s
 echo "PASS: Driver mode compiles"
 
 echo "=== Driver Test 2: Flex flags in driver mode ==="
-$FLEXCLANG --flex-verbose --flex-disable-pass=si-form-memory-clauses \
+$FLEXCLANG --flex-verbose --flex-disable-pass=machine-scheduler \
   -x hip $KERNEL --offload-arch=$ARCH -O2 -S -o /tmp/driver-disabled.s \
   2>/tmp/driver-stderr.txt
 grep -q "flexclang: disabled MIR pass" /tmp/driver-stderr.txt
@@ -649,7 +649,7 @@ echo "All tests passed!"
 
 Make it executable: `chmod +x examples/validate.sh`
 
-- [ ] **Step 2: Run cc1 tests**
+- [x] **Step 2: Run cc1 tests**
 
 ```bash
 cd /home/poyechen/workspace/repo/friendly-clang
@@ -658,7 +658,7 @@ FLEXCLANG=./build/flexclang ./examples/validate.sh
 
 Expected: cc1 tests pass (driver tests may skip if not co-installed).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add examples/validate.sh
@@ -673,7 +673,7 @@ git commit -m "feat: update validate.sh for dual-mode (cc1 + driver) testing"
 
 Verify flexclang produces identical output to clang in both modes.
 
-- [ ] **Step 1: cc1 mode bit-identity**
+- [x] **Step 1: cc1 mode bit-identity**
 
 ```bash
 echo '__attribute__((amdgpu_kernel)) void k(float *p) { p[0] = 1.0f; }' > /tmp/k.hip
@@ -691,7 +691,7 @@ echo "cc1 bit-identical: $? (0=yes)"
 
 Expected: Exit 0.
 
-- [ ] **Step 2: Driver mode bit-identity (if co-installed)**
+- [x] **Step 2: Driver mode bit-identity (if co-installed)**
 
 ```bash
 CLANG_BIN=$(dirname $(readlink -f /home/poyechen/workspace/repo/llvm-project/build/bin/clang))
@@ -708,7 +708,7 @@ echo "Driver bit-identical: $? (0=yes)"
 
 Expected: Exit 0.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit --allow-empty -m "chore: driver layer integration verified"

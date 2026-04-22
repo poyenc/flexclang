@@ -50,7 +50,7 @@ Between `BuildCompilation()` and `ExecuteCompilation()`, scan each `Command` in 
 
 Host cc1 commands, linker commands, and bundler commands are left unmodified. This ensures flex modifications only affect device code generation, matching the existing AMDGCN-only guard in `FlexPassConfigCallback`.
 
-The original `--flex-*` strings are saved in `FlexConfig::originalFlexArgs` during `parseFlexArgs()`. These are the raw argv strings (e.g., `"--flex-disable-pass=si-form-memory-clauses"`) that get injected verbatim into cc1 argument lists.
+The original `--flex-*` strings are saved in `FlexConfig::originalFlexArgs` during `parseFlexArgs()`. These are the raw argv strings (e.g., `"--flex-disable-pass=machine-scheduler"`) that get injected verbatim into cc1 argument lists.
 
 ### 2.4 AMDGCN Job Detection
 
@@ -91,7 +91,7 @@ cmake --install . --prefix /opt/rocm/llvm
 flexclang -x hip kernel.hip --offload-arch=gfx942 -O2 -o kernel.o
 
 # With flex flags
-flexclang --flex-disable-pass=si-form-memory-clauses \
+flexclang --flex-disable-pass=machine-scheduler \
   -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o kernel.s
 
 # With YAML config
@@ -117,7 +117,7 @@ cmake -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/flexclang \
 For direct cc1 usage, the `-cc1` prefix is now required:
 ```bash
 flexclang -cc1 -x hip -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
-  --flex-disable-pass=si-form-memory-clauses -O2 -S -o kernel.s kernel.hip
+  --flex-disable-pass=machine-scheduler -O2 -S -o kernel.s kernel.hip
 ```
 
 ### 5.4 Dry-Run in Driver Mode
@@ -183,7 +183,7 @@ struct FlexConfig {
 ## 8. Validation
 
 1. **Driver-mode compilation**: `flexclang -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o kernel.s` succeeds
-2. **Driver + flex flags**: `flexclang --flex-disable-pass=si-form-memory-clauses -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o kernel.s` produces modified assembly
+2. **Driver + flex flags**: `flexclang --flex-disable-pass=machine-scheduler -x hip kernel.hip --offload-arch=gfx942 -O2 -S -o kernel.s` produces modified assembly
 3. **cc1 mode**: `flexclang -cc1 ...` works as before (with `-cc1` prefix)
 4. **Bit-identity**: Driver-mode flexclang without flex flags produces identical output to clang
 5. **MIR plugin in driver mode**: `flexclang --flex-insert-after=machine-scheduler:./plugin.so -x hip kernel.hip --offload-arch=gfx942` works

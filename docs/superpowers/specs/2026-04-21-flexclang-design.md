@@ -166,7 +166,7 @@ For IR pass plugins, the standard `PassPlugin` API is used (`llvmGetPassPluginIn
 mir-passes:
   # Disable a pass (skip it)
   - action: disable
-    target: si-form-memory-clauses
+    target: machine-scheduler
 
   # Replace a pass with a plugin
   - action: replace
@@ -409,7 +409,7 @@ flexclang -cc1 -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
   -O2 -S -o baseline.s kernel.hip
 
 # 3. Try disabling a pass
-flexclang --flex-disable-pass=si-form-memory-clauses \
+flexclang --flex-disable-pass=machine-scheduler \
   -cc1 -triple amdgcn-amd-amdhsa -target-cpu gfx942 \
   -O2 -S -o modified.s kernel.hip
 
@@ -432,9 +432,9 @@ flexclang must be built against the same LLVM version as the target ROCm install
 
 `--flex-verbose` output example:
 ```
-flexclang: disabled MIR pass 'si-form-memory-clauses'
-flexclang: inserted MIR pass after 'machine-scheduler' from plugin ./my-pass.so
-flexclang: skipping IR pass 'InstCombinePass'
+flexclang: requesting disable of MIR pass 'machine-scheduler'
+flexclang: inserted after 'machine-scheduler' from ./my-pass.so
+flexclang: skipping IR pass 'InstCombinePass' (instcombine)
 ```
 
 ### 7.2 Using LLVM Debug Flags
@@ -782,10 +782,10 @@ __global__ void mfma_gemm_tile(const half4* __restrict__ A,
 
 **Example 1: Disable a pass**
 ```yaml
-# examples/configs/disable-memory-clauses.yaml
+# examples/configs/disable-scheduler.yaml
 mir-passes:
   - action: disable
-    target: si-form-memory-clauses
+    target: machine-scheduler
 ```
 
 **Example 2: Insert custom MIR pass after scheduler**
@@ -806,7 +806,7 @@ ir-passes:
 
 mir-passes:
   - action: disable
-    target: si-form-memory-clauses
+    target: peephole-opt
   - action: insert-after
     target: machine-scheduler
     plugin: ./mir-nop-inserter.so
@@ -837,11 +837,11 @@ grep -q "machine-scheduler" /tmp/pass-list.txt
 echo "PASS: machine-scheduler found in pass list"
 
 echo "=== Test 3: Disable pass ==="
-$FLEXCLANG --flex-disable-pass=si-form-memory-clauses \
+$FLEXCLANG --flex-disable-pass=machine-scheduler \
   -x hip $KERNEL -S -o /tmp/disabled.s --offload-arch=$ARCH -O2
-# Assembly should differ from baseline (fewer clause formations)
+# Assembly should differ from baseline (different scheduling)
 if diff -q /tmp/baseline.s /tmp/disabled.s > /dev/null 2>&1; then
-  echo "WARNING: disabling si-form-memory-clauses produced identical output"
+  echo "WARNING: disabling machine-scheduler produced identical output"
 else
   echo "PASS: Disabling pass changed assembly output"
 fi
@@ -930,7 +930,7 @@ examples/
     MIRNopInserter.cpp                 # MIR pass plugin source
     CMakeLists.txt                     # Build config for the plugin
   configs/
-    disable-memory-clauses.yaml        # Example: disable a pass
+    disable-scheduler.yaml              # Example: disable a pass
     insert-nop-after-sched.yaml        # Example: insert MIR pass
     combined.yaml                      # Example: combined IR + MIR
 ```
