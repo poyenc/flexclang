@@ -15,7 +15,9 @@
 #include "llvm/ADT/Any.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
+#include "llvm/Support/Allocator.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/StringSaver.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -240,6 +242,13 @@ static int flexclang_driver_main(int argc, const char **argv) {
   driverArgs.push_back(argv[0]); // program name for Driver
   flexclang::FlexConfig config =
       flexclang::parseFlexArgs(driverArgs, argc, argv);
+
+  // Expand @file response files in driver args (e.g. @CMakeFiles/...rsp
+  // from Ninja/Make link steps). parseFlexArgs passes them through as-is
+  // since they are not --flex-* flags.
+  llvm::BumpPtrAllocator A;
+  llvm::StringSaver Saver(A);
+  cl::ExpandResponseFiles(Saver, cl::TokenizeGNUCommandLine, driverArgs);
 
   if (!config.configFile.empty()) {
     if (!flexclang::parseFlexYAML(config, config.configFile))
