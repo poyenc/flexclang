@@ -1,6 +1,7 @@
 #include "FlexPassConfigCallback.h"
 #include "FlexPassLoader.h"
 #include "FlexPassNameRegistry.h"
+#include "FlexConfig.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -77,10 +78,19 @@ void registerFlexPassConfigCallback(
         if (TM.getTargetTriple().getArch() != Triple::amdgcn)
           return;
 
-        // --flex-list-passes: insert MIR pass lister after FinalizeISel.
-        // This places it inside the MIR FPPassManager so it can introspect
-        // all codegen passes via getContainedPass().
-        if (config.listPasses && mirPassNames)
+        // Insert MIR pass lister after FinalizeISel when we need to know
+        // which passes actually ran: for --flex-list-passes output, and for
+        // runtime detection of disable/replace failures (passes added via
+        // insertPass() bypass disablePass()/substitutePass()).
+        bool hasMIRDisableOrReplace = false;
+        for (const auto &rule : config.mirRules) {
+          if (rule.action == MIRPassRule::Disable ||
+              rule.action == MIRPassRule::Replace) {
+            hasMIRDisableOrReplace = true;
+            break;
+          }
+        }
+        if ((config.listPasses || hasMIRDisableOrReplace) && mirPassNames)
           PassConfig->insertPass(&FinalizeISelID,
                                  new MIRPassListPrinter(mirPassNames));
 
@@ -89,31 +99,14 @@ void registerFlexPassConfigCallback(
           case MIRPassRule::Disable: {
             const void *ID = resolvePassID(rule.target);
             if (!ID) break;
-            if (isNonSubstitutablePass(rule.target)) {
-              errs() << "flexclang: warning: '" << rule.target
-                     << "' is added via insertPass() and cannot be disabled "
-                        "via disablePass(). Use --flex-list-passes to find "
-                        "an alternative approach.\n";
-              break;
-            }
-            if (isCriticalPass(rule.target))
-              errs() << "flexclang: warning: disabling '" << rule.target
-                     << "' may cause incorrect code generation\n";
             PassConfig->disablePass(ID);
             if (config.verbose)
-              errs() << "flexclang: disabled MIR pass '" << rule.target << "'\n";
+              errs() << "flexclang: requesting disable of MIR pass '" << rule.target << "'\n";
             break;
           }
           case MIRPassRule::Replace: {
             const void *ID = resolvePassID(rule.target);
             if (!ID) break;
-            if (isNonSubstitutablePass(rule.target)) {
-              errs() << "flexclang: warning: '" << rule.target
-                     << "' is added via insertPass() and cannot be replaced "
-                        "via substitutePass(). Use --flex-list-passes to find "
-                        "an alternative approach.\n";
-              break;
-            }
             Pass *Replacement = loadMIRPassPlugin(rule.plugin, rule.config,
                                                    config.verbose);
             if (!Replacement) break;
@@ -123,7 +116,7 @@ void registerFlexPassConfigCallback(
                                      createMachineVerifierPass(
                                          "After flex plugin: " + rule.plugin));
             if (config.verbose)
-              errs() << "flexclang: replaced '" << rule.target
+              errs() << "flexclang: requesting replace of '" << rule.target
                      << "' with " << rule.plugin << "\n";
             break;
           }

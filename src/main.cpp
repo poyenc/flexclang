@@ -191,6 +191,23 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
               "--flex-insert-after=<name>:<plugin.so>\n";
   }
 
+  // Warn about MIR passes that were requested for disabling but still ran.
+  // This means the pass was added via insertPass() which bypasses the
+  // disablePass()/substitutePass() substitution table.
+  if (!mirPassNames->empty()) {
+    std::set<std::string> ranPasses(mirPassNames->begin(), mirPassNames->end());
+    for (const auto &r : config.mirRules) {
+      if (r.action == flexclang::MIRPassRule::Disable && ranPasses.count(r.target))
+        errs() << "flexclang: warning: MIR pass '" << r.target
+               << "' was not disabled (pass may be added via insertPass() "
+                  "and cannot be disabled via disablePass())\n";
+      else if (r.action == flexclang::MIRPassRule::Replace && ranPasses.count(r.target))
+        errs() << "flexclang: warning: MIR pass '" << r.target
+               << "' was not replaced (pass may be added via insertPass() "
+                  "and cannot be replaced via substitutePass())\n";
+    }
+  }
+
   // Warn about IR passes that were requested for disabling but never matched.
   // This typically means the pass is required (isRequired() == true) and cannot
   // be skipped by shouldRunOptionalPassCallback, or the name was misspelled.

@@ -524,18 +524,18 @@ MIR pass names are the **pass argument strings** registered via `INITIALIZE_PASS
 
 IR pass names are the textual pipeline names from `PassRegistry.def` and `AMDGPUPassRegistry.def`. Passes that return `true` from `isRequired()` cannot be disabled by `shouldRunOptionalPassCallback`.
 
-### 8.3 Critical Passes
+### 8.3 Non-Substitutable Pass Detection
 
-The following passes are marked as critical. Disabling them produces a **non-fatal warning** — the compilation proceeds regardless. This is intentional: advanced users (e.g., those who insert their own waitcnt management via inline asm) may legitimately need to disable even critical passes. The warning serves as an explicit acknowledgment of risk, not a blocker.
+Some AMDGPU passes are added to the pipeline via `TargetPassConfig::insertPass()` rather than `addPass(AnalysisID)`. The `disablePass()` and `substitutePass()` APIs only affect passes added via `addPass()`, so attempts to disable or replace `insertPass()`-based passes silently have no effect.
 
-| Pass | Reason |
-|------|--------|
-| `si-lower-control-flow` | Required for correct CFG |
-| `si-insert-waitcnts` | Required for memory ordering correctness |
-| `prologepilog` | Required for stack frame setup |
-| `phi-node-elimination` | Required before register allocation |
-| `virtregrewriter` | Required to map virtual to physical registers |
-| `si-fix-sgpr-copies` | Required for correct SGPR handling |
+flexclang detects this **at runtime** rather than maintaining a hard-coded list. After compilation, it checks whether a "disabled" or "replaced" pass still appears in the MIR pipeline (via `MIRPassListPrinter` introspection of the `FPPassManager`). If the pass is still present, flexclang emits a warning:
+
+```
+flexclang: warning: MIR pass 'si-form-memory-clauses' was not disabled
+(pass may be added via insertPass() and cannot be disabled via disablePass())
+```
+
+This approach is robust against LLVM updates — no static pass lists to maintain.
 
 ## 9. Build System
 

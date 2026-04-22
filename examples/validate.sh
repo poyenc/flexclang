@@ -39,14 +39,14 @@ fi
 echo "PASS: --flex-list-passes shows [ir.N]/[mir.N] format, IR before MIR"
 
 echo "=== cc1 Test 3a: Disable non-substitutable pass ==="
-# si-form-memory-clauses is added via insertPass() -- cannot be disabled.
-# flexclang should warn and assembly should be identical to baseline.
+# si-form-memory-clauses is added via insertPass() -- disablePass() has no effect.
+# flexclang detects this at runtime and warns after compilation.
 $FLEXCLANG -cc1 --flex-disable-pass=si-form-memory-clauses \
   $CC1_FLAGS -S -o /tmp/disabled-nosub.s $KERNEL \
   2>/tmp/disabled-nosub-stderr.txt
-grep -q "cannot be disabled" /tmp/disabled-nosub-stderr.txt
+grep -q "was not disabled" /tmp/disabled-nosub-stderr.txt
 diff -q /tmp/baseline.s /tmp/disabled-nosub.s > /dev/null 2>&1
-echo "PASS: Non-substitutable pass warned and assembly unchanged"
+echo "PASS: Non-substitutable pass detected at runtime, assembly unchanged"
 
 echo "=== cc1 Test 3b: Disable substitutable pass ==="
 # machine-scheduler is added via addPass(AnalysisID) -- can be disabled.
@@ -54,13 +54,22 @@ echo "=== cc1 Test 3b: Disable substitutable pass ==="
 $FLEXCLANG -cc1 --flex-verbose --flex-disable-pass=machine-scheduler \
   $CC1_FLAGS -S -o /tmp/disabled-sub.s $KERNEL \
   2>/tmp/disabled-sub-stderr.txt
-grep -q "flexclang: disabled MIR pass 'machine-scheduler'" /tmp/disabled-sub-stderr.txt
-! grep -q "cannot be disabled" /tmp/disabled-sub-stderr.txt
+grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/disabled-sub-stderr.txt
+! grep -q "was not disabled" /tmp/disabled-sub-stderr.txt
 if diff -q /tmp/baseline.s /tmp/disabled-sub.s > /dev/null 2>&1; then
   echo "FAIL: Disabling machine-scheduler should change assembly"
   exit 1
 fi
 echo "PASS: Substitutable pass disabled, assembly changed"
+
+echo "=== cc1 Test 3c: Replace non-substitutable pass ==="
+# si-form-memory-clauses is added via insertPass() -- substitutePass() has no effect.
+# flexclang detects this at runtime and warns after compilation.
+$FLEXCLANG -cc1 --flex-replace-pass=si-form-memory-clauses:$MIR_PLUGIN \
+  $CC1_FLAGS -S -o /tmp/replaced-nosub.s $KERNEL \
+  2>/tmp/replaced-nosub-stderr.txt
+grep -q "was not replaced" /tmp/replaced-nosub-stderr.txt
+echo "PASS: Non-substitutable replace detected at runtime"
 
 echo "=== cc1 Test 4: IR pass plugin ==="
 $FLEXCLANG -cc1 -fpass-plugin=$IR_PLUGIN \
@@ -112,7 +121,7 @@ $FLEXCLANG -cc1 --flex-verbose \
   --flex-replace-pass=machine-scheduler:$MIR_PLUGIN \
   $CC1_FLAGS -S -o /tmp/replaced.s $KERNEL \
   2>/tmp/replace-stderr.txt
-grep -q "flexclang: replaced 'machine-scheduler'" /tmp/replace-stderr.txt
+grep -q "flexclang: requesting replace of 'machine-scheduler'" /tmp/replace-stderr.txt
 grep -q "\[MIRNopInserter\]" /tmp/replace-stderr.txt
 REPLACE_NOPS=$(grep -c "s_nop" /tmp/replaced.s || true)
 if [ "$REPLACE_NOPS" -gt "$BASELINE_NOPS" ]; then
@@ -139,9 +148,9 @@ $FLEXCLANG -cc1 --flex-verbose \
   $CC1_FLAGS -S -o /tmp/cli-override.s $KERNEL \
   2>/tmp/cli-override-stderr.txt
 # CLI disable of machine-scheduler should take effect
-grep -q "flexclang: disabled MIR pass 'machine-scheduler'" /tmp/cli-override-stderr.txt
+grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/cli-override-stderr.txt
 # YAML disable of peephole-opt should also take effect
-grep -q "flexclang: disabled MIR pass 'peephole-opt'" /tmp/cli-override-stderr.txt
+grep -q "flexclang: requesting disable of MIR pass 'peephole-opt'" /tmp/cli-override-stderr.txt
 echo "PASS: CLI and YAML rules both applied"
 
 echo ""
@@ -174,7 +183,7 @@ echo "=== Driver Test 3: Flex flags in driver mode ==="
 $FLEXCLANG --flex-verbose --flex-disable-pass=machine-scheduler \
   -x hip $DRIVER_KERNEL --offload-arch=$ARCH -O2 -S -o /tmp/driver-disabled.s \
   2>/tmp/driver-stderr.txt
-grep -q "flexclang: disabled MIR pass 'machine-scheduler'" /tmp/driver-stderr.txt
+grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/driver-stderr.txt
 echo "PASS: Flex flags work in driver mode"
 
 echo ""
