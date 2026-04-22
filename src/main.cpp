@@ -145,15 +145,16 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
                       return true;
                     });
               }
-              // Collect IR pass names for --flex-list-passes
-              if (listPasses) {
+              // Collect IR pass names for --flex-list-passes and for
+              // distinguishing required vs misspelled in disable diagnostics.
+              if (listPasses || !irDisableShared->empty()) {
                 PIC->registerBeforeNonSkippedPassCallback(
-                    [irPassNames, irPassNamesSeen,
+                    [irPassNames, irPassNamesSeen, listPasses,
                      PIC](StringRef Name, Any) {
                       StringRef PipelineName =
                           PIC->getPassNameForClassName(Name);
                       std::string key = PipelineName.str();
-                      if (irPassNamesSeen->insert(key).second)
+                      if (irPassNamesSeen->insert(key).second && listPasses)
                         irPassNames->push_back(key);
                     });
               }
@@ -209,12 +210,15 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   }
 
   // Warn about IR passes that were requested for disabling but never matched.
-  // This typically means the pass is required (isRequired() == true) and cannot
-  // be skipped by shouldRunOptionalPassCallback, or the name was misspelled.
   for (const auto &d : irDisable) {
-    if (!irMatched->count(d))
-      errs() << "flexclang: warning: IR pass '" << d
-             << "' was not disabled (pass may be required or name misspelled)\n";
+    if (!irMatched->count(d)) {
+      if (irPassNamesSeen->count(d))
+        errs() << "flexclang: warning: IR pass '" << d
+               << "' is required and cannot be disabled\n";
+      else
+        errs() << "flexclang: error: unknown IR pass '" << d
+               << "' (use --flex-list-passes to see available passes)\n";
+    }
   }
 
   return Success ? 0 : 1;

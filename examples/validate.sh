@@ -170,13 +170,19 @@ else
   echo "PASS: --flex-disable-ir-pass skipped IR pass, assembly changed"
 fi
 
-echo "=== cc1 Test 11: IR pass not disabled warning ==="
-# Use a non-existent pass name -- should trigger "was not disabled" warning
+echo "=== cc1 Test 11a: Unknown IR pass name ==="
 $FLEXCLANG -cc1 --flex-disable-ir-pass=nonexistent-pass-name \
   $CC1_FLAGS -S -o /tmp/ir-nomatch.s $KERNEL \
   2>/tmp/ir-nomatch-stderr.txt
-grep -q "was not disabled" /tmp/ir-nomatch-stderr.txt
-echo "PASS: Unmatched IR pass name triggers warning"
+grep -q "flexclang: error: unknown IR pass 'nonexistent-pass-name'" /tmp/ir-nomatch-stderr.txt
+echo "PASS: Unknown IR pass name produces error"
+
+echo "=== cc1 Test 11b: Required IR pass ==="
+$FLEXCLANG -cc1 --flex-disable-ir-pass=verify \
+  $CC1_FLAGS -S -o /tmp/ir-required.s $KERNEL \
+  2>/tmp/ir-required-stderr.txt
+grep -q "is required and cannot be disabled" /tmp/ir-required-stderr.txt
+echo "PASS: Required IR pass produces specific warning"
 
 echo "=== cc1 Test 12: FLEXCLANG_CONFIG env var ==="
 FLEXCLANG_CONFIG=examples/configs/combined.yaml \
