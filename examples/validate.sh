@@ -101,17 +101,20 @@ grep -q "\[MIRNopInserter\]" /tmp/yaml-stderr.txt
 echo "PASS: YAML config loaded both IR and MIR plugins"
 
 echo "=== cc1 Test 7: --flex-dry-run ==="
+rm -f /tmp/dryrun-out.s
 $FLEXCLANG -cc1 --flex-dry-run \
   --flex-disable-pass=machine-scheduler \
   --flex-insert-after=machine-scheduler:$MIR_PLUGIN \
-  $CC1_FLAGS -S -o /dev/null $KERNEL \
+  $CC1_FLAGS -S -o /tmp/dryrun-out.s $KERNEL \
   2>/tmp/dryrun-stderr.txt || true
 grep -q "\[dry-run\] MIR disable" /tmp/dryrun-stderr.txt
 grep -q "\[dry-run\] MIR insert-after" /tmp/dryrun-stderr.txt
-# Dry-run should NOT produce assembly (exits early)
-if [ ! -s /tmp/dryrun-out.s ] 2>/dev/null || true; then
-  echo "PASS: --flex-dry-run printed modifications without compiling"
+# Dry-run exits before compilation -- output file must not be created
+if [ -f /tmp/dryrun-out.s ]; then
+  echo "FAIL: --flex-dry-run should not produce output file"
+  exit 1
 fi
+echo "PASS: --flex-dry-run printed modifications without compiling"
 
 echo "=== cc1 Test 8: --flex-replace-pass ==="
 # Replace machine-scheduler with the NOP inserter plugin.
@@ -152,6 +155,51 @@ grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/cli
 # YAML disable of peephole-opt should also take effect
 grep -q "flexclang: requesting disable of MIR pass 'peephole-opt'" /tmp/cli-override-stderr.txt
 echo "PASS: CLI and YAML rules both applied"
+
+echo "=== cc1 Test 10: --flex-disable-ir-pass ==="
+$FLEXCLANG -cc1 --flex-verbose --flex-disable-ir-pass=instcombine \
+  $CC1_FLAGS -S -o /tmp/ir-disabled.s $KERNEL \
+  2>/tmp/ir-disabled-stderr.txt
+grep -q "flexclang: skipping IR pass" /tmp/ir-disabled-stderr.txt
+if diff -q /tmp/baseline.s /tmp/ir-disabled.s > /dev/null 2>&1; then
+  echo "WARNING: disabling instcombine produced identical output (may be expected at -O2)"
+else
+  echo "PASS: --flex-disable-ir-pass skipped IR pass, assembly changed"
+fi
+
+echo "=== cc1 Test 11: IR pass not disabled warning ==="
+# Use a non-existent pass name -- should trigger "was not disabled" warning
+$FLEXCLANG -cc1 --flex-disable-ir-pass=nonexistent-pass-name \
+  $CC1_FLAGS -S -o /tmp/ir-nomatch.s $KERNEL \
+  2>/tmp/ir-nomatch-stderr.txt
+grep -q "was not disabled" /tmp/ir-nomatch-stderr.txt
+echo "PASS: Unmatched IR pass name triggers warning"
+
+echo "=== cc1 Test 12: FLEXCLANG_CONFIG env var ==="
+FLEXCLANG_CONFIG=examples/configs/combined.yaml \
+  $FLEXCLANG -cc1 \
+  $CC1_FLAGS -S -o /tmp/envvar-config.s $KERNEL \
+  2>/tmp/envvar-stderr.txt
+grep -q "\[IRInstCounter\]" /tmp/envvar-stderr.txt
+grep -q "\[MIRNopInserter\]" /tmp/envvar-stderr.txt
+echo "PASS: FLEXCLANG_CONFIG env var loads config"
+
+echo "=== cc1 Test 13: Critical pass warning ==="
+# Disabling a critical pass like si-insert-waitcnts should warn
+$FLEXCLANG -cc1 --flex-disable-pass=si-insert-waitcnts \
+  $CC1_FLAGS -S -o /tmp/critical-pass.s $KERNEL \
+  2>/tmp/critical-pass-stderr.txt || true
+grep -q "may cause incorrect code generation" /tmp/critical-pass-stderr.txt
+echo "PASS: Critical pass warning emitted"
+
+echo "=== cc1 Test 14: --flex-verify-plugins ==="
+$FLEXCLANG -cc1 --flex-verify-plugins \
+  --flex-insert-after=machine-scheduler:$MIR_PLUGIN \
+  $CC1_FLAGS -S -o /tmp/verify-plugin.s $KERNEL \
+  2>/tmp/verify-plugin-stderr.txt
+grep -q "\[MIRNopInserter\]" /tmp/verify-plugin-stderr.txt
+# Compilation should succeed (verifier should not flag the NOP inserter)
+echo "PASS: --flex-verify-plugins runs without verification failure"
 
 echo ""
 echo "========================================="
