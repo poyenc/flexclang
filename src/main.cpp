@@ -240,6 +240,9 @@ static int flexclang_driver_main(int argc, const char **argv) {
   // Strip --flex-* flags, keep driver args
   SmallVector<const char *, 256> driverArgs;
   driverArgs.push_back(argv[0]); // program name for Driver
+  // flexclang is a C++ compiler (replaces clang++). The Driver infers
+  // C/C++ mode from the binary name, so set it explicitly.
+  driverArgs.push_back("--driver-mode=g++");
   flexclang::FlexConfig config =
       flexclang::parseFlexArgs(driverArgs, argc, argv);
 
