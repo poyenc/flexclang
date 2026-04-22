@@ -121,16 +121,17 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
     if (needCallbacks) {
       bool verbose = config.verbose;
       bool listPasses = config.listPasses;
+      std::string progName = config.programName;
       auto irDisableShared = std::make_shared<std::vector<std::string>>(irDisable);
       Clang->getCodeGenOpts().PassBuilderCallbacks.push_back(
           [irDisableShared, irPlugins, verbose, irMatched, listPasses,
-           irPassNames, irPassNamesSeen](PassBuilder &PB) {
+           irPassNames, irPassNamesSeen, progName](PassBuilder &PB) {
             auto *PIC = PB.getPassInstrumentationCallbacks();
             if (PIC) {
               if (!irDisableShared->empty()) {
                 PIC->registerShouldRunOptionalPassCallback(
                     [irDisableShared, verbose, irMatched,
-                     PIC](StringRef Name, Any) {
+                     PIC, progName](StringRef Name, Any) {
                       StringRef PipelineName =
                           PIC->getPassNameForClassName(Name);
                       for (const auto &d : *irDisableShared) {
@@ -139,7 +140,7 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
                             D.equals_insensitive(Name)) {
                           irMatched->insert(d);
                           if (verbose)
-                            errs() << "flexclang: skipping IR pass '"
+                            errs() << progName << ": skipping IR pass '"
                                    << Name << "' (" << PipelineName << ")\n";
                           return false;
                         }
@@ -166,7 +167,7 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
               if (Plugin) {
                 Plugin->registerPassBuilderCallbacks(PB);
               } else {
-                errs() << "flexclang: error: "
+                errs() << progName << ": error: "
                        << toString(Plugin.takeError()) << "\n";
               }
             }
@@ -201,11 +202,11 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
     std::set<std::string> ranPasses(mirPassNames->begin(), mirPassNames->end());
     for (const auto &r : config.mirRules) {
       if (r.action == flexclang::MIRPassRule::Disable && ranPasses.count(r.target))
-        errs() << "flexclang: warning: MIR pass '" << r.target
+        errs() << config.programName << ": warning: MIR pass '" << r.target
                << "' was not disabled (pass may be added via insertPass() "
                   "and cannot be disabled via disablePass())\n";
       else if (r.action == flexclang::MIRPassRule::Replace && ranPasses.count(r.target))
-        errs() << "flexclang: warning: MIR pass '" << r.target
+        errs() << config.programName << ": warning: MIR pass '" << r.target
                << "' was not replaced (pass may be added via insertPass() "
                   "and cannot be replaced via substitutePass())\n";
     }
@@ -215,10 +216,10 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   for (const auto &d : irDisable) {
     if (!irMatched->count(d)) {
       if (irPassNamesSeen->count(d))
-        errs() << "flexclang: warning: IR pass '" << d
+        errs() << config.programName << ": warning: IR pass '" << d
                << "' is required and cannot be disabled\n";
       else
-        errs() << "flexclang: error: unknown IR pass '" << d
+        errs() << config.programName << ": error: unknown IR pass '" << d
                << "' (use --flex-list-passes to see available passes)\n";
     }
   }
@@ -278,7 +279,7 @@ static int flexclang_driver_main(int argc, const char **argv) {
   // Create the Driver
   clang::driver::Driver TheDriver(ExePath,
                                    llvm::sys::getDefaultTargetTriple(),
-                                   Diags, "flexclang LLVM compiler");
+                                   Diags, config.programName + " LLVM compiler");
 
   // In-process cc1 execution
   TheDriver.CC1Main = [](SmallVectorImpl<const char *> &ArgV) {

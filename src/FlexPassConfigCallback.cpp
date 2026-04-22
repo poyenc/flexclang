@@ -97,21 +97,22 @@ void registerFlexPassConfigCallback(
         for (const auto &rule : config.mirRules) {
           switch (rule.action) {
           case MIRPassRule::Disable: {
-            const void *ID = resolvePassID(rule.target);
+            const void *ID = resolvePassID(rule.target, config.programName);
             if (!ID) break;
             if (isCriticalPass(rule.target))
-              errs() << "flexclang: warning: disabling '" << rule.target
+              errs() << config.programName << ": warning: disabling '" << rule.target
                      << "' may cause incorrect code generation\n";
             PassConfig->disablePass(ID);
             if (config.verbose)
-              errs() << "flexclang: requesting disable of MIR pass '" << rule.target << "'\n";
+              errs() << config.programName << ": requesting disable of MIR pass '" << rule.target << "'\n";
             break;
           }
           case MIRPassRule::Replace: {
-            const void *ID = resolvePassID(rule.target);
+            const void *ID = resolvePassID(rule.target, config.programName);
             if (!ID) break;
             Pass *Replacement = loadMIRPassPlugin(rule.plugin, rule.config,
-                                                   config.verbose);
+                                                   config.verbose,
+                                                   config.programName);
             if (!Replacement) break;
             PassConfig->substitutePass(ID, Replacement);
             if (config.verifyPlugins)
@@ -119,15 +120,16 @@ void registerFlexPassConfigCallback(
                                      createMachineVerifierPass(
                                          "After flex plugin: " + rule.plugin));
             if (config.verbose)
-              errs() << "flexclang: requesting replace of '" << rule.target
+              errs() << config.programName << ": requesting replace of '" << rule.target
                      << "' with " << rule.plugin << "\n";
             break;
           }
           case MIRPassRule::InsertAfter: {
-            const void *ID = resolvePassID(rule.target);
+            const void *ID = resolvePassID(rule.target, config.programName);
             if (!ID) break;
             Pass *NewPass = loadMIRPassPlugin(rule.plugin, rule.config,
-                                                      config.verbose);
+                                                      config.verbose,
+                                                      config.programName);
             if (!NewPass) break;
             PassConfig->insertPass(ID, NewPass);
             if (config.verifyPlugins)
@@ -135,7 +137,7 @@ void registerFlexPassConfigCallback(
                                      createMachineVerifierPass(
                                          "After flex plugin: " + rule.plugin));
             if (config.verbose)
-              errs() << "flexclang: inserted after '" << rule.target
+              errs() << config.programName << ": inserted after '" << rule.target
                      << "' from " << rule.plugin << "\n";
             break;
           }
