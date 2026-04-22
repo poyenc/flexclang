@@ -336,62 +336,6 @@ FLEXCLANG=./build/flexclang++ ./examples/validate.sh
 
 The test suite covers 17 cc1 tests and 7 driver-mode tests including pass disable/replace/insert, plugin loading, YAML config, dry-run, CLI precedence, and diagnostic messages.
 
-## Drop-in Verification Test
-
-To verify flexclang++ is a transparent drop-in replacement for stock clang++, build
-a real HIP project with both compilers and compare the device object files.
-
-### Prerequisites
-
-- Docker with a ROCm PyTorch image (e.g., `rocm/pytorch:rocm7.2.2_ubuntu22.04_py3.10_pytorch_release_2.10.0`)
-- Composable Kernel source code
-- `rocm-llvm-dev` and `libzstd-dev` packages installed in the container
-
-### Steps
-
-1. **Build flexclang++ inside a ROCm container** and install to `/opt/rocm/llvm/bin/`:
-   ```bash
-   mkdir build && cd build
-   cmake /path/to/flexclang -DCMAKE_PREFIX_PATH=/opt/rocm/llvm -G Ninja
-   ninja
-   cp flexclang++ /opt/rocm/llvm/bin/
-   ```
-
-2. **Build the target with stock clang++** (baseline):
-   ```bash
-   cd /path/to/ck-stock-build
-   bash /path/to/composablekernel/script/cmake-ck-dev.sh /path/to/composablekernel gfx942 \
-       -DFMHA_FWD_ENABLE_APIS="fwd" -DBUILD_TESTING=OFF \
-       -B /path/to/ck-stock-build -G Ninja
-   ninja tile_example_fmha_fwd
-   ```
-
-3. **Build the same target with flexclang++**:
-   ```bash
-   cd /path/to/ck-flex-build
-   bash /path/to/composablekernel/script/cmake-ck-dev.sh /path/to/composablekernel gfx942 \
-       -DFMHA_FWD_ENABLE_APIS="fwd" -DBUILD_TESTING=OFF \
-       -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/flexclang++ \
-       -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/flexclang++ \
-       -B /path/to/ck-flex-build -G Ninja
-   ninja tile_example_fmha_fwd
-   ```
-
-4. **Compare device object files** — verify differences are limited to `__hip_cuid_` and `__hip_gpubin_handle_` (CUID-derived symbols that differ due to executable path):
-   ```bash
-   SDIR=ck-stock-build/example/ck_tile/01_fmha/CMakeFiles/tile_fmha_fwd_instances.dir
-   FDIR=ck-flex-build/example/ck_tile/01_fmha/CMakeFiles/tile_fmha_fwd_instances.dir
-   for sf in $SDIR/*.o; do
-       fname=$(basename "$sf")
-       diff <(strings -n20 "$sf" | grep -v "__hip_cuid_\|__hip_gpubin_handle_" | sort) \
-            <(strings -n20 "$FDIR/$fname" | grep -v "__hip_cuid_\|__hip_gpubin_handle_" | sort) \
-       || echo "REAL DIFF: $fname"
-   done
-   ```
-
-   All `.o` files should show zero differences after filtering CUID symbols. The actual
-   device codegen (IR, assembly, GPU ISA) is byte-identical.
-
 ## Project Structure
 
 ```
