@@ -11,8 +11,8 @@ KERNEL=examples/test_kernel.hip
 CC1_FLAGS="-x hip -triple amdgcn-amd-amdhsa -target-cpu $ARCH -O2"
 
 # Plugin paths (relative to repo root)
-IR_PLUGIN=examples/ir-pass-counter/build/ir-inst-counter.so
-MIR_PLUGIN=examples/mir-pass-nop-inserter/build/mir-nop-inserter.so
+IR_PLUGIN=${IR_PLUGIN:-examples/ir-pass-counter/build/ir-inst-counter.so}
+MIR_PLUGIN=${MIR_PLUGIN:-examples/mir-pass-nop-inserter/build/mir-nop-inserter.so}
 
 echo "========================================="
 echo "  cc1 Mode Tests"
