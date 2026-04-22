@@ -27,7 +27,6 @@
 #include "llvm/Support/CrashRecoveryContext.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/IOSandbox.h"
 #include "llvm/Support/Process.h"
 #include "llvm/TargetParser/Host.h"
 
@@ -87,10 +86,7 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   auto Clang =
       std::make_unique<CompilerInstance>(std::move(Invocation), std::move(PCHOps));
 
-  auto VFS = [] {
-    auto BypassSandbox = llvm::sys::sandbox::scopedDisable();
-    return vfs::getRealFileSystem();
-  }();
+  auto VFS = vfs::getRealFileSystem();
   Clang->createVirtualFileSystem(std::move(VFS), DiagsBuffer);
   Clang->createDiagnostics();
 

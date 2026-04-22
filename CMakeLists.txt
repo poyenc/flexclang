@@ -28,7 +28,7 @@ llvm_map_components_to_libnames(LLVM_LIBS
 
 target_link_libraries(flexclang++ PRIVATE
   clangFrontend clangFrontendTool clangCodeGen
-  clangDriver clangBasic clangSerialization clangOptions
+  clangDriver clangBasic clangSerialization
   ${LLVM_LIBS}
 )
 
