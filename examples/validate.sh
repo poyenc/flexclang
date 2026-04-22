@@ -134,27 +134,30 @@ else
   exit 1
 fi
 
-echo "=== cc1 Test 9: CLI overrides YAML ==="
-# YAML inserts NOP after machine-scheduler. CLI disables machine-scheduler.
-# CLI should take precedence: scheduler disabled, NOP inserter still runs
-# (insert-after with a disabled anchor -- the insert still fires since it's
-# a separate rule). The key check: CLI disable warning NOT present (scheduler
-# is substitutable), and the disable message IS present.
+echo "=== cc1 Test 9: CLI overrides YAML for same target ==="
+# YAML inserts NOP plugin after machine-scheduler.
+# CLI disables machine-scheduler (same target).
+# CLI takes precedence: YAML rule for machine-scheduler is skipped.
+# Verify: scheduler is disabled, NOP plugin does NOT run.
 cat > /tmp/flex-test-override.yaml <<'YAMLEOF'
 mir-passes:
-  - action: disable
-    target: peephole-opt
+  - action: insert-after
+    target: machine-scheduler
+    plugin: examples/mir-pass-nop-inserter/build/mir-nop-inserter.so
 YAMLEOF
 $FLEXCLANG -cc1 --flex-verbose \
   --flex-config=/tmp/flex-test-override.yaml \
   --flex-disable-pass=machine-scheduler \
   $CC1_FLAGS -S -o /tmp/cli-override.s $KERNEL \
   2>/tmp/cli-override-stderr.txt
-# CLI disable of machine-scheduler should take effect
+# CLI disable should take effect
 grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/cli-override-stderr.txt
-# YAML disable of peephole-opt should also take effect
-grep -q "flexclang: requesting disable of MIR pass 'peephole-opt'" /tmp/cli-override-stderr.txt
-echo "PASS: CLI and YAML rules both applied"
+# YAML insert-after for same target should be skipped (CLI wins)
+if grep -q "\[MIRNopInserter\]" /tmp/cli-override-stderr.txt; then
+  echo "FAIL: YAML rule should have been overridden by CLI for same target"
+  exit 1
+fi
+echo "PASS: CLI overrides YAML for same target"
 
 echo "=== cc1 Test 10: --flex-disable-ir-pass ==="
 $FLEXCLANG -cc1 --flex-verbose --flex-disable-ir-pass=instcombine \
@@ -192,7 +195,32 @@ $FLEXCLANG -cc1 --flex-disable-pass=si-insert-waitcnts \
 grep -q "may cause incorrect code generation" /tmp/critical-pass-stderr.txt
 echo "PASS: Critical pass warning emitted"
 
-echo "=== cc1 Test 14: --flex-verify-plugins ==="
+echo "=== cc1 Test 14: --flex-config overrides FLEXCLANG_CONFIG ==="
+# FLEXCLANG_CONFIG points to combined.yaml (loads IR+MIR plugins).
+# --flex-config points to disable-scheduler.yaml (just disables scheduler).
+# --flex-config should win: no IR plugin output, scheduler disabled.
+FLEXCLANG_CONFIG=examples/configs/combined.yaml \
+  $FLEXCLANG -cc1 --flex-verbose \
+  --flex-config=examples/configs/disable-scheduler.yaml \
+  $CC1_FLAGS -S -o /tmp/config-override.s $KERNEL \
+  2>/tmp/config-override-stderr.txt
+# --flex-config's rule should apply
+grep -q "flexclang: requesting disable of MIR pass 'machine-scheduler'" /tmp/config-override-stderr.txt
+# FLEXCLANG_CONFIG's IR plugin should NOT have loaded
+if grep -q "\[IRInstCounter\]" /tmp/config-override-stderr.txt; then
+  echo "FAIL: FLEXCLANG_CONFIG should be overridden by --flex-config"
+  exit 1
+fi
+echo "PASS: --flex-config overrides FLEXCLANG_CONFIG"
+
+echo "=== cc1 Test 15: Unknown MIR pass name ==="
+$FLEXCLANG -cc1 --flex-disable-pass=nonexistent-mir-pass \
+  $CC1_FLAGS -S -o /tmp/unknown-mir.s $KERNEL \
+  2>/tmp/unknown-mir-stderr.txt
+grep -q "flexclang: error: unknown pass 'nonexistent-mir-pass'" /tmp/unknown-mir-stderr.txt
+echo "PASS: Unknown MIR pass name produces error"
+
+echo "=== cc1 Test 16: --flex-verify-plugins ==="
 $FLEXCLANG -cc1 --flex-verify-plugins \
   --flex-insert-after=machine-scheduler:$MIR_PLUGIN \
   $CC1_FLAGS -S -o /tmp/verify-plugin.s $KERNEL \
