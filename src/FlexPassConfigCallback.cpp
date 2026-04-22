@@ -99,6 +99,9 @@ void registerFlexPassConfigCallback(
           case MIRPassRule::Disable: {
             const void *ID = resolvePassID(rule.target);
             if (!ID) break;
+            if (isCriticalPass(rule.target))
+              errs() << "flexclang: warning: disabling '" << rule.target
+                     << "' may cause incorrect code generation\n";
             PassConfig->disablePass(ID);
             if (config.verbose)
               errs() << "flexclang: requesting disable of MIR pass '" << rule.target << "'\n";

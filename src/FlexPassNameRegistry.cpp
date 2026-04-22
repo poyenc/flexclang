@@ -1,4 +1,5 @@
 #include "FlexPassNameRegistry.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/PassInfo.h"
 #include "llvm/PassRegistry.h"
 #include "llvm/Support/raw_ostream.h"
@@ -14,6 +15,15 @@ const void *resolvePassID(StringRef passArg) {
     return nullptr;
   }
   return PI->getTypeInfo();
+}
+
+bool isCriticalPass(StringRef passArg) {
+  static const StringSet<> Critical = {
+      "si-lower-control-flow", "si-insert-waitcnts",
+      "prologepilog",          "phi-node-elimination",
+      "virtregrewriter",       "si-fix-sgpr-copies",
+  };
+  return Critical.contains(passArg);
 }
 
 } // namespace flexclang

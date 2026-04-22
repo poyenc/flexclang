@@ -8,6 +8,9 @@ namespace flexclang {
 /// Resolve pass argument string to AnalysisID. Returns nullptr if not found.
 const void *resolvePassID(llvm::StringRef passArg);
 
+/// Returns true if disabling this pass is likely to cause miscompilation.
+bool isCriticalPass(llvm::StringRef passArg);
+
 } // namespace flexclang
 
 #endif
