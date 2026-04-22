@@ -52,6 +52,13 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   SmallVector<const char *, 256> clangArgs;
   flexclang::FlexConfig config =
       flexclang::parseFlexArgs(clangArgs, cc1Argc, cc1Argv);
+  // cc1Argv[0] is "-cc1" (skipped past program name), so fix programName
+  // from the original ArgV[0].
+  {
+    StringRef path(ArgV[0]);
+    auto pos = path.rfind('/');
+    config.programName = (pos == StringRef::npos) ? path.str() : path.substr(pos + 1).str();
+  }
 
   if (!config.configFile.empty()) {
     if (!flexclang::parseFlexYAML(config, config.configFile))
