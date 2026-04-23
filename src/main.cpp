@@ -34,6 +34,11 @@
 using namespace clang;
 using namespace llvm;
 
+// The original program name from argv[0] in main(), preserved so that
+// cc1 invocations from driver mode (where ArgV[0] becomes the clang++ path)
+// can still identify themselves correctly in diagnostics.
+static std::string OriginalProgramName;
+
 static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   cl::ResetAllOptionOccurrences();
 
@@ -52,13 +57,9 @@ static int flexclang_cc1_main(SmallVectorImpl<const char *> &ArgV) {
   SmallVector<const char *, 256> clangArgs;
   flexclang::FlexConfig config =
       flexclang::parseFlexArgs(clangArgs, cc1Argc, cc1Argv);
-  // cc1Argv[0] is "-cc1" (skipped past program name), so fix programName
-  // from the original ArgV[0].
-  {
-    StringRef path(ArgV[0]);
-    auto pos = path.rfind('/');
-    config.programName = (pos == StringRef::npos) ? path.str() : path.substr(pos + 1).str();
-  }
+  // Use the original program name from main(), not ArgV[0] which may be
+  // the clang++ path when invoked from driver mode.
+  config.programName = OriginalProgramName;
 
   if (!config.configFile.empty()) {
     if (!flexclang::parseFlexYAML(config, config.configFile))
@@ -339,6 +340,9 @@ static int flexclang_driver_main(int argc, const char **argv) {
 
 int main(int argc, const char **argv) {
   InitLLVM X(argc, argv);
+
+  // Preserve original program name before driver mode may override argv[0].
+  OriginalProgramName = llvm::sys::path::stem(argv[0]).str();
 
   InitializeAllTargets();
   InitializeAllTargetMCs();
